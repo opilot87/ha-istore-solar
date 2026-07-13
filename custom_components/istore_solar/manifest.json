@@ -1,0 +1,13 @@
+{
+  "domain": "istore_solar",
+  "name": "iStore Solar",
+  "codeowners": [],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/olivierpilot/ha-istore-solar",
+  "integration_type": "hub",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/olivierpilot/ha-istore-solar/issues",
+  "requirements": [],
+  "version": "0.1.0"
+}

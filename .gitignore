@@ -1,0 +1,16 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+*.egg-info/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Home Assistant local development and diagnostics
+.storage/
+home-assistant.log*
+secrets.yaml
+*.har
+private/

@@ -1,0 +1,69 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "iStore Solar",
+        "description": "Set up the experimental iStore Solar integration with the Local Storage value named dtv_access_token. Username/password login is not supported yet.",
+        "data": {
+          "name": "Name",
+          "access_token": "Access token"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Update iStore Solar access token",
+        "description": "Enter a replacement dtv_access_token from the iStore portal.",
+        "data": {
+          "access_token": "Access token"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect",
+      "invalid_auth": "Invalid or expired access token",
+      "malformed_response": "The iStore API response could not be understood",
+      "server_error": "The iStore API returned an error",
+      "unsupported_response": "This iStore account response is not supported yet",
+      "unknown": "Unexpected error"
+    },
+    "abort": {
+      "already_configured": "iStore Solar is already configured",
+      "reauth_failed": "Could not find the existing iStore Solar entry",
+      "reauth_successful": "The iStore Solar access token was updated",
+      "wrong_account": "The replacement token belongs to a different account"
+    }
+  },
+  "entity": {
+    "sensor": {
+      "solar_power": {
+        "name": "Solar power"
+      },
+      "home_consumption_power": {
+        "name": "Home consumption power"
+      },
+      "grid_power": {
+        "name": "Grid power"
+      },
+      "battery_power": {
+        "name": "Battery power"
+      },
+      "battery_state_of_charge": {
+        "name": "Battery state of charge"
+      },
+      "battery_energy_charged_today": {
+        "name": "Battery energy charged today"
+      },
+      "battery_energy_discharged_today": {
+        "name": "Battery energy discharged today"
+      },
+      "site_status": {
+        "name": "Site status"
+      },
+      "inverter_status": {
+        "name": "Inverter status"
+      },
+      "battery_status": {
+        "name": "Battery status"
+      }
+    }
+  }
+}
