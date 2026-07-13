@@ -3,17 +3,18 @@
 from __future__ import annotations
 
 from asyncio import TimeoutError as AsyncTimeoutError
-from collections.abc import Iterable
 from dataclasses import dataclass, field
 import json
 import logging
 import re
+import time
 from typing import Any, Final, NoReturn
 
 from aiohttp import ClientError, ClientSession, ClientTimeout
 
 from .const import (
     API_BASE_URL,
+    APP_ID,
     DEFAULT_LOCALE,
     DOMAIN,
     MANUFACTURER,
@@ -33,6 +34,8 @@ REDACTED: Final = "**REDACTED**"
 REQUEST_TIMEOUT: Final = ClientTimeout(total=20)
 LOGGER = logging.getLogger(__name__)
 MAX_RESPONSE_PREVIEW_LENGTH: Final = 240
+PERMISSION_DENIED_CODE: Final = 88203
+JSON_UNSET: Final = object()
 
 SENSITIVE_KEYS: Final[tuple[str, ...]] = (
     "account",
@@ -128,6 +131,10 @@ class IStoreSolarApiError(IStoreSolarError):
     """Raised for non-authentication API errors."""
 
 
+class IStoreSolarPermissionDeniedError(IStoreSolarApiError):
+    """Raised when the API denies a specific authorized request."""
+
+
 @dataclass(slots=True, frozen=True)
 class _ResponseContext:
     """Sanitized response context for downstream schema validation."""
@@ -137,6 +144,15 @@ class _ResponseContext:
     status: int
     content_type: str | None
     response_preview: str | None
+    application_code: int | str | None
+
+
+@dataclass(slots=True, frozen=True)
+class _DiscoveredSite:
+    """Authorized site data discovered from the browser sequence."""
+
+    site_id: str
+    assets: list[dict[str, Any]]
 
 
 @dataclass(slots=True, frozen=True)
@@ -184,7 +200,7 @@ class IStoreSolarApiClient:
         self._base_url = base_url.rstrip("/")
         self._locale = locale
         self._user_info: dict[str, Any] | None = None
-        self._site_id: str | None = None
+        self._discovered_site: _DiscoveredSite | None = None
 
     async def async_get_user_info(self) -> dict[str, Any]:
         """Return account metadata for the configured bearer token."""
@@ -232,7 +248,16 @@ class IStoreSolarApiClient:
                 operation="asset discovery",
             )
             _raise_logged_api_exception(err)
-        return [item for item in data if isinstance(item, dict)]
+        assets = [item for item in data if isinstance(item, dict)]
+        _log_discovery_result(
+            endpoint_name="asset/list",
+            asset_type_requested=DEVICE_LIST_TYPES,
+            identifier_source="asset-tree result",
+            identifier=site_id,
+            application_code=response.application_code,
+            assets=assets,
+        )
+        return assets
 
     async def async_get_asset_detail(
         self,
@@ -272,64 +297,96 @@ class IStoreSolarApiClient:
 
     async def async_get_live_telemetry(self) -> IStoreSolarTelemetry:
         """Return normalized live telemetry for the first discovered site."""
-        user_info = self._user_info or await self.async_get_user_info()
-        site_id = self._site_id or await self._async_discover_site_id(user_info)
-        self._site_id = site_id
+        discovered_site = await self._async_discover_site()
+        site_id = discovered_site.site_id
 
-        overview_detail = await self.async_get_asset_detail(
-            site_id,
-            view="WebSiteDetailMonitorOverview",
-        )
-        site_live_detail = await self.async_get_asset_detail(
-            site_id,
-            attributes=SITE_LIVE_ATTRIBUTES,
-            measurement_points=SITE_LIVE_MEASUREMENT_POINTS,
-        )
-        assets = await self.async_get_assets(site_id)
+        try:
+            overview_detail = await self.async_get_asset_detail(
+                site_id,
+                view="WebSiteDetailMonitorOverview",
+            )
+            site_live_detail = await self.async_get_asset_detail(
+                site_id,
+                attributes=SITE_LIVE_ATTRIBUTES,
+                measurement_points=SITE_LIVE_MEASUREMENT_POINTS,
+            )
+        except IStoreSolarPermissionDeniedError as err:
+            raise IStoreSolarUnsupportedResponseError(
+                "Site discovery failed: asset detail request was denied",
+                path=err.path,
+                status=err.status,
+                content_type=err.content_type,
+                response_preview=err.response_preview,
+                operation="asset detail retrieval",
+            ) from err
 
-        return self._normalize_telemetry(site_id, overview_detail, site_live_detail, assets)
+        return self._normalize_telemetry(
+            site_id,
+            overview_detail,
+            site_live_detail,
+            discovered_site.assets,
+        )
 
     async def async_get_data(self) -> IStoreSolarTelemetry:
         """Return the latest normalized telemetry for Home Assistant."""
         return await self.async_get_live_telemetry()
 
-    async def _async_discover_site_id(self, user_info: dict[str, Any]) -> str:
-        """Discover the first site ID exposed by the current token."""
-        candidates = list(_site_id_candidates(user_info))
-        if not candidates:
+    async def _async_discover_site(self) -> _DiscoveredSite:
+        """Discover authorized site assets using the confirmed browser sequence."""
+        if self._discovered_site is not None:
+            return self._discovered_site
+
+        await self.async_get_user_info()
+        tree = await self._async_get_asset_tree()
+        site_id = _first_site_id_from_asset_tree(tree.payload)
+        if site_id is None:
             err = IStoreSolarUnsupportedResponseError(
-                "user-info response did not expose a site candidate",
+                "could not discover a residential solar site from asset tree",
+                path=tree.path,
+                status=tree.status,
+                content_type=tree.content_type,
+                response_preview=tree.response_preview,
                 operation="asset discovery",
             )
             _raise_logged_api_exception(err)
 
-        for candidate in candidates:
-            try:
-                detail = await self.async_get_asset_detail(
-                    candidate,
-                    view="WebSiteDetailMonitorOverview",
-                )
-            except IStoreSolarAuthenticationError:
-                raise
-            except IStoreSolarError:
-                continue
+        _log_discovery_result(
+            endpoint_name="asset/tree",
+            asset_type_requested="Res_Solar_Site",
+            identifier_source="asset-tree result",
+            identifier=site_id,
+            application_code=tree.application_code,
+            assets=_asset_tree_nodes(tree.payload),
+        )
+        assets = await self.async_get_assets(site_id)
+        self._discovered_site = _DiscoveredSite(site_id=site_id, assets=assets)
+        return self._discovered_site
 
-            site_id = _first_site_id_from_detail(detail)
-            if site_id is not None:
-                return site_id
-
-        err = IStoreSolarUnsupportedResponseError(
-            "could not discover a residential solar site from this token",
+    async def _async_get_asset_tree(self) -> _ResponseContext:
+        """Return the app-portal asset tree used by the browser before asset detail."""
+        return await self._request(
+            "POST",
+            "/app-portal/web/v1/user/app/asset/tree",
+            params={
+                "appId": APP_ID,
+                "needAssociateAsset": "true",
+                "resourceTypes": "all",
+                "_sid_": str(int(time.time() * 1000)),
+            },
+            raw_data="null",
+            extra_headers={"Locale": self._locale},
             operation="asset discovery",
         )
-        _raise_logged_api_exception(err)
 
     async def _request(
         self,
         method: str,
         path: str,
         *,
-        json_data: dict[str, Any] | list[Any] | None = None,
+        params: dict[str, str] | None = None,
+        json_data: Any = JSON_UNSET,
+        raw_data: str | None = None,
+        extra_headers: dict[str, str] | None = None,
         operation: str,
     ) -> _ResponseContext:
         """Send one authenticated request and return the JSON object body."""
@@ -346,15 +403,24 @@ class IStoreSolarApiClient:
             "Content-Type": "application/json",
             "locale": self._locale,
         }
+        if extra_headers is not None:
+            headers.update(extra_headers)
 
         LOGGER.debug("Starting iStore Solar setup-stage request: %s", operation)
         try:
+            request_kwargs: dict[str, Any] = {
+                "headers": headers,
+                "params": params,
+                "timeout": REQUEST_TIMEOUT,
+            }
+            if raw_data is not None:
+                request_kwargs["data"] = raw_data
+            elif json_data is not JSON_UNSET:
+                request_kwargs["json"] = json_data
             response = await self._session.request(
                 method,
                 f"{self._base_url}{path}",
-                headers=headers,
-                json=json_data,
-                timeout=REQUEST_TIMEOUT,
+                **request_kwargs,
             )
             content_type = _sanitize_content_type(response.headers.get("Content-Type"))
             response_text = await response.text()
@@ -441,6 +507,20 @@ class IStoreSolarApiClient:
                 except IStoreSolarAuthenticationError as raised:
                     _log_api_exception(raised, raised)
                     raise
+            if code in (PERMISSION_DENIED_CODE, str(PERMISSION_DENIED_CODE)):
+                err = IStoreSolarPermissionDeniedError(
+                    "iStore Solar denied this request",
+                    path=path,
+                    status=response.status,
+                    content_type=content_type,
+                    response_preview=response_preview,
+                    operation=operation,
+                )
+                try:
+                    raise err
+                except IStoreSolarPermissionDeniedError as raised:
+                    _log_api_exception(raised, raised)
+                    raise
             err = IStoreSolarApiError(
                 "iStore Solar returned an error",
                 path=path,
@@ -461,6 +541,7 @@ class IStoreSolarApiClient:
             status=response.status,
             content_type=content_type,
             response_preview=response_preview,
+            application_code=code,
         )
 
     def _normalize_telemetry(
@@ -539,29 +620,34 @@ class IStoreSolarApiClient:
         return IStoreSolarTelemetry(site=site_device, devices=devices, values=values)
 
 
-def _site_id_candidates(user_info: dict[str, Any]) -> Iterable[str]:
-    """Yield opaque site candidates from user-info without exposing them."""
-    seen: set[str] = set()
-    uri = _string_value(user_info.get("uri"))
-    if uri:
-        segments = [segment for segment in uri.split("/") if segment]
-        for segment in reversed(segments):
-            if segment not in seen:
-                seen.add(segment)
-                yield segment
-
-
-def _first_site_id_from_detail(detail: dict[str, Any]) -> str | None:
-    """Return the first residential solar site identifier in a detail response."""
-    for mdm_id, item in detail.items():
-        if not isinstance(item, dict):
+def _first_site_id_from_asset_tree(payload: dict[str, Any]) -> str | None:
+    """Return the first residential solar site identifier from asset-tree data."""
+    for node in _asset_tree_nodes(payload):
+        if _asset_type(node) != "Res_Solar_Site":
             continue
-        attrs = _dict_value(item, "attributes")
-        mdm_type = _string_value(attrs.get("mdmType"))
-        if mdm_type in (None, "Res_Solar_Site"):
-            attr_id = _string_value(attrs.get("mdmId"))
-            return attr_id or str(mdm_id)
+        site_id = _string_value(node.get("mdmId")) or _string_value(
+            node.get("assetId")
+        )
+        if site_id is None:
+            site_id = _string_value(node.get("resourceId")) or _string_value(
+                node.get("id")
+            )
+        if site_id is not None:
+            return site_id
     return None
+
+
+def _asset_tree_nodes(value: Any) -> list[dict[str, Any]]:
+    """Return all object nodes from a nested asset-tree payload."""
+    nodes: list[dict[str, Any]] = []
+    if isinstance(value, dict):
+        nodes.append(value)
+        for item in value.values():
+            nodes.extend(_asset_tree_nodes(item))
+    elif isinstance(value, list):
+        for item in value:
+            nodes.extend(_asset_tree_nodes(item))
+    return nodes
 
 
 def _detail_item(detail: dict[str, Any], preferred_id: str) -> dict[str, Any]:
@@ -624,6 +710,18 @@ def _first_asset_by_type(assets: list[dict[str, Any]], mdm_type: str) -> dict[st
         if asset.get("mdmType") == mdm_type or attrs.get("mdmType") == mdm_type:
             return asset
     return {}
+
+
+def _asset_type(asset: dict[str, Any]) -> str | None:
+    """Return a normalized asset type from common tree/list fields."""
+    attrs = _dict_value(asset, "attributes")
+    return (
+        _string_value(asset.get("mdmType"))
+        or _string_value(attrs.get("mdmType"))
+        or _string_value(asset.get("assetType"))
+        or _string_value(asset.get("resourceType"))
+        or _string_value(asset.get("type"))
+    )
 
 
 def _first_point_value(
@@ -735,6 +833,39 @@ def _log_api_exception(err: IStoreSolarError, exc_info: BaseException) -> None:
     LOGGER.debug(
         "iStore Solar API exception traceback",
         exc_info=(type(exc_info), exc_info, exc_info.__traceback__),
+    )
+
+
+def _log_discovery_result(
+    *,
+    endpoint_name: str,
+    asset_type_requested: str,
+    identifier_source: str,
+    identifier: str,
+    application_code: int | str | None,
+    assets: list[dict[str, Any]],
+) -> None:
+    """Log sanitized discovery progress without exposing identifiers or payloads."""
+    asset_types = sorted(
+        {
+            asset_type
+            for asset in assets
+            if (asset_type := _asset_type(asset)) is not None
+        }
+    )
+    LOGGER.debug(
+        (
+            "iStore Solar discovery endpoint=%s asset_type_requested=%s "
+            "identifier_source=%s identifier_length=%d application_code=%s "
+            "asset_count=%d asset_types=%s"
+        ),
+        endpoint_name,
+        asset_type_requested,
+        identifier_source,
+        len(identifier),
+        application_code if application_code is not None else "unknown",
+        len(assets),
+        ",".join(asset_types) if asset_types else "none",
     )
 
 

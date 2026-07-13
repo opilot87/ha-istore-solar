@@ -16,6 +16,7 @@ MANUFACTURER = "iStore"
 
 API_HOST = "home.istore.net.au"
 API_BASE_URL = f"https://{API_HOST}"
+APP_ID = "6508dd96-c72f-4c75-85d3-11c6e1380f75"
 DEFAULT_LOCALE = "en-US"
 
 SENSOR_SOLAR_POWER = "solar_power"
