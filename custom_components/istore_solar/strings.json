@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "iStore Solar",
-        "description": "Set up the experimental iStore Solar integration with the Local Storage value named dtv_access_token. Username/password login is not supported yet.",
+        "description": "Set up the experimental iStore Solar integration with the Local Storage value named dtv_access_token. Username/password login is not supported yet. {error_detail}",
         "data": {
           "name": "Name",
           "access_token": "Access token"
@@ -11,13 +11,14 @@
       },
       "reauth_confirm": {
         "title": "Update iStore Solar access token",
-        "description": "Enter a replacement dtv_access_token from the iStore portal.",
+        "description": "Enter a replacement dtv_access_token from the iStore portal. {error_detail}",
         "data": {
           "access_token": "Access token"
         }
       }
     },
     "error": {
+      "api_error": "The iStore API returned an error",
       "cannot_connect": "Failed to connect",
       "invalid_auth": "Invalid or expired access token",
       "malformed_response": "The iStore API response could not be understood",

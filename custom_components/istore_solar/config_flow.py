@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import voluptuous as vol
@@ -22,6 +23,8 @@ from .api import (
     IStoreSolarUnsupportedResponseError,
 )
 from .const import CONF_ACCESS_TOKEN, DEFAULT_NAME, DOMAIN
+
+LOGGER = logging.getLogger(__name__)
 
 
 def _token_schema(*, include_name: bool) -> vol.Schema:
@@ -48,19 +51,35 @@ async def _validate_token(
     return await client.async_get_user_info()
 
 
-def _error_from_exception(err: Exception) -> str:
-    """Map API exceptions to config-flow error keys."""
+def _error_from_exception(err: Exception) -> tuple[str, str]:
+    """Map API exceptions to config-flow error keys and safe form diagnostics."""
     if isinstance(err, IStoreSolarAuthenticationError):
-        return "invalid_auth"
+        return "invalid_auth", ""
     if isinstance(err, IStoreSolarConnectionError):
-        return "cannot_connect"
+        return "cannot_connect", ""
     if isinstance(err, IStoreSolarMalformedResponseError):
-        return "malformed_response"
+        return "unsupported_response", _development_error_detail(
+            "Unexpected response",
+            err,
+        )
     if isinstance(err, IStoreSolarUnsupportedResponseError):
-        return "unsupported_response"
+        return "unsupported_response", _development_error_detail(
+            "Unsupported response",
+            err,
+        )
     if isinstance(err, IStoreSolarApiError):
-        return "server_error"
-    return "unknown"
+        return "api_error", _development_error_detail("API error", err)
+    LOGGER.debug("Unexpected iStore Solar config-flow exception", exc_info=err)
+    return "unknown", ""
+
+
+def _development_error_detail(prefix: str, err: Exception) -> str:
+    """Return a temporary safe development-only form diagnostic."""
+    operation = getattr(err, "operation", None) or "unknown operation"
+    status = getattr(err, "status", None)
+    if isinstance(status, int):
+        return f"{prefix} during {operation} (HTTP {status})."
+    return f"{prefix} during {operation}."
 
 
 class IStoreSolarConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -76,13 +95,14 @@ class IStoreSolarConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> FlowResult:
         """Handle the initial step."""
         errors: dict[str, str] = {}
+        error_detail = ""
 
         if user_input is not None:
             access_token = user_input[CONF_ACCESS_TOKEN]
             try:
                 user_info = await _validate_token(self.hass, access_token)
             except Exception as err:  # noqa: BLE001 - mapped to HA form errors.
-                errors["base"] = _error_from_exception(err)
+                errors["base"], error_detail = _error_from_exception(err)
             else:
                 unique_id = user_info.get("userId")
                 if isinstance(unique_id, str) and unique_id:
@@ -103,6 +123,7 @@ class IStoreSolarConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="user",
             data_schema=_token_schema(include_name=True),
             errors=errors,
+            description_placeholders={"error_detail": error_detail},
         )
 
     async def async_step_reauth(
@@ -121,13 +142,14 @@ class IStoreSolarConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> FlowResult:
         """Ask the user for a replacement access token."""
         errors: dict[str, str] = {}
+        error_detail = ""
 
         if user_input is not None:
             access_token = user_input[CONF_ACCESS_TOKEN]
             try:
                 user_info = await _validate_token(self.hass, access_token)
             except Exception as err:  # noqa: BLE001 - mapped to HA form errors.
-                errors["base"] = _error_from_exception(err)
+                errors["base"], error_detail = _error_from_exception(err)
             else:
                 entry = self._reauth_entry
                 if entry is None:
@@ -150,4 +172,5 @@ class IStoreSolarConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="reauth_confirm",
             data_schema=_token_schema(include_name=False),
             errors=errors,
+            description_placeholders={"error_detail": error_detail},
         )

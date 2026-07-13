@@ -5,9 +5,12 @@ from __future__ import annotations
 from asyncio import TimeoutError as AsyncTimeoutError
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Any, Final
+import json
+import logging
+import re
+from typing import Any, Final, NoReturn
 
-from aiohttp import ClientError, ClientResponseError, ClientSession, ClientTimeout
+from aiohttp import ClientError, ClientSession, ClientTimeout
 
 from .const import (
     API_BASE_URL,
@@ -28,19 +31,24 @@ from .const import (
 
 REDACTED: Final = "**REDACTED**"
 REQUEST_TIMEOUT: Final = ClientTimeout(total=20)
+LOGGER = logging.getLogger(__name__)
+MAX_RESPONSE_PREVIEW_LENGTH: Final = 240
 
 SENSITIVE_KEYS: Final[tuple[str, ...]] = (
     "account",
     "address",
     "authorization",
     "cookie",
+    "customer",
     "device",
     "email",
     "id",
     "latitude",
     "longitude",
     "mdm",
+    "name",
     "nmi",
+    "owner",
     "password",
     "phone",
     "serial",
@@ -48,7 +56,16 @@ SENSITIVE_KEYS: Final[tuple[str, ...]] = (
     "sid",
     "sn",
     "token",
+    "uri",
     "user",
+)
+
+SENSITIVE_VALUE_PATTERNS: Final[tuple[re.Pattern[str], ...]] = (
+    re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]+", re.IGNORECASE),
+    re.compile(r"(?i)(authorization|cookie|password|token|sid)=([^&\s]+)"),
+    re.compile(r"\b[A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{12}\b"),
+    re.compile(r"\b[A-Za-z0-9_-]{24,}\b"),
+    re.compile(r"\b[\w.+-]+@[\w.-]+\.\w+\b"),
 )
 
 SITE_LIVE_MEASUREMENT_POINTS: Final = ",".join(
@@ -72,6 +89,24 @@ DEVICE_LIST_TYPES: Final = (
 class IStoreSolarError(Exception):
     """Base error for iStore Solar API failures."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        path: str | None = None,
+        status: int | None = None,
+        content_type: str | None = None,
+        response_preview: str | None = None,
+        operation: str | None = None,
+    ) -> None:
+        """Initialize the exception with sanitized diagnostics."""
+        super().__init__(message)
+        self.path = path
+        self.status = status
+        self.content_type = content_type
+        self.response_preview = response_preview
+        self.operation = operation
+
 
 class IStoreSolarAuthenticationError(IStoreSolarError):
     """Raised when authentication fails or expires."""
@@ -91,6 +126,17 @@ class IStoreSolarUnsupportedResponseError(IStoreSolarError):
 
 class IStoreSolarApiError(IStoreSolarError):
     """Raised for non-authentication API errors."""
+
+
+@dataclass(slots=True, frozen=True)
+class _ResponseContext:
+    """Sanitized response context for downstream schema validation."""
+
+    payload: dict[str, Any]
+    path: str
+    status: int
+    content_type: str | None
+    response_preview: str | None
 
 
 @dataclass(slots=True, frozen=True)
@@ -142,10 +188,22 @@ class IStoreSolarApiClient:
 
     async def async_get_user_info(self) -> dict[str, Any]:
         """Return account metadata for the configured bearer token."""
-        response = await self._request("GET", "/hossain-bff/user/v1.0/user-info")
-        data = response.get("data")
+        response = await self._request(
+            "GET",
+            "/hossain-bff/user/v1.0/user-info",
+            operation="user-info validation",
+        )
+        data = response.payload.get("data")
         if not isinstance(data, dict):
-            raise IStoreSolarMalformedResponseError("user-info response missing data")
+            err = IStoreSolarMalformedResponseError(
+                "user-info response missing data",
+                path=response.path,
+                status=response.status,
+                content_type=response.content_type,
+                response_preview=response.response_preview,
+                operation="user-info validation",
+            )
+            _raise_logged_api_exception(err)
         self._user_info = data
         return data
 
@@ -161,10 +219,19 @@ class IStoreSolarApiClient:
                 "pageNo": 1,
                 "pageSize": 500,
             },
+            operation="asset discovery",
         )
-        data = response.get("data")
+        data = response.payload.get("data")
         if not isinstance(data, list):
-            raise IStoreSolarMalformedResponseError("asset-list response missing data")
+            err = IStoreSolarMalformedResponseError(
+                "asset-list response missing data",
+                path=response.path,
+                status=response.status,
+                content_type=response.content_type,
+                response_preview=response.response_preview,
+                operation="asset discovery",
+            )
+            _raise_logged_api_exception(err)
         return [item for item in data if isinstance(item, dict)]
 
     async def async_get_asset_detail(
@@ -188,10 +255,19 @@ class IStoreSolarApiClient:
             "POST",
             "/hossain-bff/monitor/v1.0/asset/detail",
             json_data=body,
+            operation="asset detail retrieval",
         )
-        data = response.get("data")
+        data = response.payload.get("data")
         if not isinstance(data, dict):
-            raise IStoreSolarMalformedResponseError("asset-detail response missing data")
+            err = IStoreSolarMalformedResponseError(
+                "asset-detail response missing data",
+                path=response.path,
+                status=response.status,
+                content_type=response.content_type,
+                response_preview=response.response_preview,
+                operation="asset detail retrieval",
+            )
+            _raise_logged_api_exception(err)
         return data
 
     async def async_get_live_telemetry(self) -> IStoreSolarTelemetry:
@@ -221,9 +297,11 @@ class IStoreSolarApiClient:
         """Discover the first site ID exposed by the current token."""
         candidates = list(_site_id_candidates(user_info))
         if not candidates:
-            raise IStoreSolarUnsupportedResponseError(
-                "user-info response did not expose a site candidate"
+            err = IStoreSolarUnsupportedResponseError(
+                "user-info response did not expose a site candidate",
+                operation="asset discovery",
             )
+            _raise_logged_api_exception(err)
 
         for candidate in candidates:
             try:
@@ -240,9 +318,11 @@ class IStoreSolarApiClient:
             if site_id is not None:
                 return site_id
 
-        raise IStoreSolarUnsupportedResponseError(
-            "could not discover a residential solar site from this token"
+        err = IStoreSolarUnsupportedResponseError(
+            "could not discover a residential solar site from this token",
+            operation="asset discovery",
         )
+        _raise_logged_api_exception(err)
 
     async def _request(
         self,
@@ -250,10 +330,16 @@ class IStoreSolarApiClient:
         path: str,
         *,
         json_data: dict[str, Any] | list[Any] | None = None,
-    ) -> dict[str, Any]:
+        operation: str,
+    ) -> _ResponseContext:
         """Send one authenticated request and return the JSON object body."""
         if not self._access_token:
-            raise IStoreSolarAuthenticationError("missing access token")
+            err = IStoreSolarAuthenticationError(
+                "missing access token",
+                path=path,
+                operation=operation,
+            )
+            _raise_logged_api_exception(err)
 
         headers = {
             "Authorization": f"Bearer {self._access_token}",
@@ -261,6 +347,7 @@ class IStoreSolarApiClient:
             "locale": self._locale,
         }
 
+        LOGGER.debug("Starting iStore Solar setup-stage request: %s", operation)
         try:
             response = await self._session.request(
                 method,
@@ -269,31 +356,112 @@ class IStoreSolarApiClient:
                 json=json_data,
                 timeout=REQUEST_TIMEOUT,
             )
-            response.raise_for_status()
-            payload = await response.json(content_type=None)
+            content_type = _sanitize_content_type(response.headers.get("Content-Type"))
+            response_text = await response.text()
+            response_preview = _sanitize_response_preview(response_text, content_type)
+            if response.status in (401, 403):
+                raise IStoreSolarAuthenticationError(
+                    "access token was rejected",
+                    path=path,
+                    status=response.status,
+                    content_type=content_type,
+                    response_preview=response_preview,
+                    operation=operation,
+                )
+            if response.status >= 400:
+                raise IStoreSolarApiError(
+                    "iStore Solar request failed",
+                    path=path,
+                    status=response.status,
+                    content_type=content_type,
+                    response_preview=response_preview,
+                    operation=operation,
+                )
+            try:
+                payload = json.loads(response_text)
+            except ValueError as err:
+                raise IStoreSolarMalformedResponseError(
+                    "response was not valid JSON",
+                    path=path,
+                    status=response.status,
+                    content_type=content_type,
+                    response_preview=response_preview,
+                    operation=operation,
+                ) from err
         except (AsyncTimeoutError, TimeoutError) as err:
-            raise IStoreSolarConnectionError("timed out connecting to iStore Solar") from err
-        except ClientResponseError as err:
-            if err.status in (401, 403):
-                raise IStoreSolarAuthenticationError("access token was rejected") from err
-            if err.status >= 500:
-                raise IStoreSolarApiError("iStore Solar server error") from err
-            raise IStoreSolarApiError("iStore Solar request failed") from err
+            error = IStoreSolarConnectionError(
+                "timed out connecting to iStore Solar",
+                path=path,
+                operation=operation,
+            )
+            _log_api_exception(error, err)
+            raise error from err
         except ClientError as err:
-            raise IStoreSolarConnectionError("could not connect to iStore Solar") from err
-        except ValueError as err:
-            raise IStoreSolarMalformedResponseError("response was not valid JSON") from err
+            error = IStoreSolarConnectionError(
+                "could not connect to iStore Solar",
+                path=path,
+                operation=operation,
+            )
+            _log_api_exception(error, err)
+            raise error from err
+        except IStoreSolarError as err:
+            _log_api_exception(err, err)
+            raise
+        finally:
+            LOGGER.debug("Finished iStore Solar setup-stage request: %s", operation)
 
         if not isinstance(payload, dict):
-            raise IStoreSolarMalformedResponseError("response JSON was not an object")
+            err = IStoreSolarMalformedResponseError(
+                "response JSON was not an object",
+                path=path,
+                status=response.status,
+                content_type=content_type,
+                response_preview=response_preview,
+                operation=operation,
+            )
+            try:
+                raise err
+            except IStoreSolarMalformedResponseError as raised:
+                _log_api_exception(raised, raised)
+                raise
 
         code = payload.get("code")
         if code not in (None, 0, 200, "0", "200"):
             if code in (401, 403, "401", "403"):
-                raise IStoreSolarAuthenticationError("access token was rejected")
-            raise IStoreSolarApiError("iStore Solar returned an error")
+                err = IStoreSolarAuthenticationError(
+                    "access token was rejected",
+                    path=path,
+                    status=response.status,
+                    content_type=content_type,
+                    response_preview=response_preview,
+                    operation=operation,
+                )
+                try:
+                    raise err
+                except IStoreSolarAuthenticationError as raised:
+                    _log_api_exception(raised, raised)
+                    raise
+            err = IStoreSolarApiError(
+                "iStore Solar returned an error",
+                path=path,
+                status=response.status,
+                content_type=content_type,
+                response_preview=response_preview,
+                operation=operation,
+            )
+            try:
+                raise err
+            except IStoreSolarApiError as raised:
+                _log_api_exception(raised, raised)
+                raise
 
-        return payload
+        return _ResponseContext(
+            payload=payload,
+            path=path,
+            status=response.status,
+            content_type=content_type,
+            response_preview=response_preview,
+        )
 
     def _normalize_telemetry(
         self,
@@ -510,3 +678,70 @@ def redact_sensitive_data(value: Any) -> Any:
         return tuple(redact_sensitive_data(item) for item in value)
 
     return value
+
+
+def _sanitize_content_type(content_type: str | None) -> str | None:
+    """Return a safe response content type without parameters."""
+    if content_type is None:
+        return None
+    media_type = content_type.split(";", 1)[0].strip().lower()
+    return _sanitize_text(media_type) if media_type else None
+
+
+def _sanitize_response_preview(text: str, content_type: str | None) -> str | None:
+    """Return a short sanitized response preview when it is safe enough."""
+    if not text:
+        return None
+
+    preview_value: Any = text
+    if content_type is not None and "json" in content_type:
+        try:
+            preview_value = redact_sensitive_data(json.loads(text))
+        except ValueError:
+            preview_value = text
+
+    if isinstance(preview_value, str):
+        preview_text = preview_value
+    else:
+        preview_text = json.dumps(preview_value, sort_keys=True)
+    preview = _sanitize_text(preview_text)
+    if not preview:
+        return None
+    return preview[:MAX_RESPONSE_PREVIEW_LENGTH]
+
+
+def _sanitize_text(value: str) -> str:
+    """Remove token-looking and identifier-looking values from diagnostic text."""
+    sanitized = " ".join(value.split())
+    for pattern in SENSITIVE_VALUE_PATTERNS:
+        sanitized = pattern.sub(REDACTED, sanitized)
+    return sanitized
+
+
+def _log_api_exception(err: IStoreSolarError, exc_info: BaseException) -> None:
+    """Log sanitized API exception diagnostics."""
+    LOGGER.warning(
+        (
+            "iStore Solar API exception during %s: path=%s status=%s "
+            "content_type=%s response_preview=%s exception_type=%s"
+        ),
+        err.operation or "unknown operation",
+        err.path or "unknown",
+        err.status if err.status is not None else "unknown",
+        err.content_type or "unknown",
+        err.response_preview or "unavailable",
+        type(err).__name__,
+    )
+    LOGGER.debug(
+        "iStore Solar API exception traceback",
+        exc_info=(type(exc_info), exc_info, exc_info.__traceback__),
+    )
+
+
+def _raise_logged_api_exception(err: IStoreSolarError) -> NoReturn:
+    """Raise an API exception after logging it with traceback context."""
+    try:
+        raise err
+    except IStoreSolarError as raised:
+        _log_api_exception(raised, raised)
+        raise
