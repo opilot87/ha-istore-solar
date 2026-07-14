@@ -19,16 +19,21 @@ from .const import (
     DOMAIN,
     MANUFACTURER,
     SENSOR_BATTERY_CHARGED_TODAY,
+    SENSOR_BATTERY_CHARGING_POWER,
     SENSOR_BATTERY_DISCHARGED_TODAY,
+    SENSOR_BATTERY_DISCHARGING_POWER,
     SENSOR_BATTERY_POWER,
     SENSOR_BATTERY_SOC,
     SENSOR_BATTERY_STATUS,
+    SENSOR_GRID_EXPORT_POWER,
+    SENSOR_GRID_IMPORT_POWER,
     SENSOR_GRID_POWER,
     SENSOR_HOME_CONSUMPTION_POWER,
     SENSOR_INVERTER_STATUS,
     SENSOR_SITE_STATUS,
     SENSOR_SOLAR_POWER,
 )
+from .power import inverted_positive_power, positive_power
 
 REDACTED: Final = "**REDACTED**"
 REQUEST_TIMEOUT: Final = ClientTimeout(total=20)
@@ -621,6 +626,14 @@ class IStoreSolarApiClient:
         devices = _devices_from_assets(assets, site_device.identifiers)
         measurement_points = _dict_value(site_live_item, "measurementPoints")
         overview_points = _dict_value(overview_item, "measurementPoints")
+        grid_power = _first_point_value(
+            measurement_points,
+            ("PUB_SITE.METERActivePW", "METER.ActivePW"),
+        )
+        battery_power = _first_point_value(
+            measurement_points,
+            ("PUB_SITE.BSActivePW", "BS.ActivePW"),
+        )
 
         values: dict[str, IStoreSolarSensorValue] = {
             SENSOR_SOLAR_POWER: IStoreSolarSensorValue(
@@ -632,17 +645,17 @@ class IStoreSolarApiClient:
             SENSOR_HOME_CONSUMPTION_POWER: IStoreSolarSensorValue(
                 _first_point_value(measurement_points, ("ConsPower",))
             ),
-            SENSOR_GRID_POWER: IStoreSolarSensorValue(
-                _first_point_value(
-                    measurement_points,
-                    ("PUB_SITE.METERActivePW", "METER.ActivePW"),
-                )
+            SENSOR_GRID_POWER: IStoreSolarSensorValue(grid_power),
+            SENSOR_GRID_IMPORT_POWER: IStoreSolarSensorValue(positive_power(grid_power)),
+            SENSOR_GRID_EXPORT_POWER: IStoreSolarSensorValue(
+                inverted_positive_power(grid_power)
             ),
-            SENSOR_BATTERY_POWER: IStoreSolarSensorValue(
-                _first_point_value(
-                    measurement_points,
-                    ("PUB_SITE.BSActivePW", "BS.ActivePW"),
-                )
+            SENSOR_BATTERY_POWER: IStoreSolarSensorValue(battery_power),
+            SENSOR_BATTERY_CHARGING_POWER: IStoreSolarSensorValue(
+                positive_power(battery_power)
+            ),
+            SENSOR_BATTERY_DISCHARGING_POWER: IStoreSolarSensorValue(
+                inverted_positive_power(battery_power)
             ),
             SENSOR_BATTERY_SOC: IStoreSolarSensorValue(
                 _first_point_value(measurement_points, ("PUB_SITE.Soc", "BS.Soc"))

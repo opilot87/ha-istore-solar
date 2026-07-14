@@ -44,8 +44,20 @@
       "grid_power": {
         "name": "Grid power"
       },
+      "grid_import_power": {
+        "name": "Grid import power"
+      },
+      "grid_export_power": {
+        "name": "Grid export power"
+      },
       "battery_power": {
         "name": "Battery power"
+      },
+      "battery_charging_power": {
+        "name": "Battery charging power"
+      },
+      "battery_discharging_power": {
+        "name": "Battery discharging power"
       },
       "battery_state_of_charge": {
         "name": "Battery state of charge"
