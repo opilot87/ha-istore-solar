@@ -139,6 +139,7 @@ class IStoreSolarSensor(
 
     entity_description: IStoreSolarSensorEntityDescription
     _attr_attribution = ATTRIBUTION
+    _attr_has_entity_name = True
 
     def __init__(
         self,
