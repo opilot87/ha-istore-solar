@@ -122,7 +122,7 @@ def _development_error_detail(prefix: str, err: Exception) -> str:
 class IStoreSolarConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle an iStore Solar config flow."""
 
-    VERSION = 1
+    VERSION = 2
 
     _reauth_entry: config_entries.ConfigEntry | None = None
 

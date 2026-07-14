@@ -26,6 +26,8 @@ from .const import (
     SENSOR_BATTERY_POWER,
     SENSOR_BATTERY_SOC,
     SENSOR_BATTERY_STATUS,
+    SENSOR_GRID_ENERGY_EXPORTED_TODAY,
+    SENSOR_GRID_ENERGY_IMPORTED_TODAY,
     SENSOR_GRID_EXPORT_POWER,
     SENSOR_GRID_IMPORT_POWER,
     SENSOR_GRID_POWER,
@@ -35,13 +37,13 @@ from .const import (
     SENSOR_SOLAR_POWER,
     SENSOR_TOTAL_BATTERY_CHARGED_ENERGY,
     SENSOR_TOTAL_BATTERY_DISCHARGED_ENERGY,
-    SENSOR_TOTAL_GRID_EXPORTED_ENERGY,
-    SENSOR_TOTAL_GRID_IMPORTED_ENERGY,
     SENSOR_TOTAL_SOLAR_PRODUCTION,
 )
 from .cumulative import (
     CumulativeFieldObservation,
+    cumulative_native_value,
     observe_cumulative_value,
+    value_type_name,
 )
 from .power import inverted_positive_power, positive_power
 from .privacy import (
@@ -810,32 +812,30 @@ class IStoreSolarApiClient:
                 ("TotalActiveProduction:BOL", "ActiveProduction:BOL"),
             )
 
-        meter_has_valid_cumulative = False
-        grid_import_value = self._cumulative_value_from_point(
-            cumulative_observations,
+        meter_has_valid_daily_energy = False
+        grid_import_value = _daily_energy_value_from_point(
             "METER.APConsumed",
             meter_points,
-            SENSOR_TOTAL_GRID_IMPORTED_ENERGY,
+            SENSOR_GRID_ENERGY_IMPORTED_TODAY,
         )
         if grid_import_value is not None:
-            meter_has_valid_cumulative = True
-        values[SENSOR_TOTAL_GRID_IMPORTED_ENERGY] = IStoreSolarSensorValue(
+            meter_has_valid_daily_energy = True
+        values[SENSOR_GRID_ENERGY_IMPORTED_TODAY] = IStoreSolarSensorValue(
             grid_import_value
         )
 
-        grid_export_value = self._cumulative_value_from_point(
-            cumulative_observations,
+        grid_export_value = _daily_energy_value_from_point(
             "METER.APProduction",
             meter_points,
-            SENSOR_TOTAL_GRID_EXPORTED_ENERGY,
+            SENSOR_GRID_ENERGY_EXPORTED_TODAY,
         )
         if grid_export_value is not None:
-            meter_has_valid_cumulative = True
-        values[SENSOR_TOTAL_GRID_EXPORTED_ENERGY] = IStoreSolarSensorValue(
+            meter_has_valid_daily_energy = True
+        values[SENSOR_GRID_ENERGY_EXPORTED_TODAY] = IStoreSolarSensorValue(
             grid_export_value
         )
 
-        if not meter_has_valid_cumulative:
+        if not meter_has_valid_daily_energy:
             devices.pop("meter", None)
 
         values[SENSOR_TOTAL_BATTERY_CHARGED_ENERGY] = IStoreSolarSensorValue(
@@ -1125,6 +1125,31 @@ def _mark_missing(
         ",".join(source_fields),
         sensor_key,
     )
+
+
+def _daily_energy_value_from_point(
+    source_field: str,
+    points: dict[str, Any],
+    sensor_key: str,
+) -> float | int | None:
+    """Extract an optional non-negative daily energy value."""
+    point = _dict_value(points, source_field)
+    if not point:
+        LOGGER.debug(
+            "iStore Solar daily energy field missing: field=%s sensor=%s",
+            source_field,
+            sensor_key,
+        )
+        return None
+    value = cumulative_native_value(point.get("value"))
+    if value is None:
+        LOGGER.debug(
+            "iStore Solar daily energy field malformed: field=%s sensor=%s type=%s",
+            source_field,
+            sensor_key,
+            value_type_name(point.get("value")),
+        )
+    return value
 
 
 def _devices_from_assets(

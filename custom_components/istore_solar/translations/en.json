@@ -94,11 +94,11 @@
       "total_solar_production": {
         "name": "Total solar production"
       },
-      "total_grid_imported_energy": {
-        "name": "Total grid imported energy"
+      "grid_energy_imported_today": {
+        "name": "Grid energy imported today"
       },
-      "total_grid_exported_energy": {
-        "name": "Total grid exported energy"
+      "grid_energy_exported_today": {
+        "name": "Grid energy exported today"
       },
       "total_battery_charged_energy": {
         "name": "Total battery charged energy"

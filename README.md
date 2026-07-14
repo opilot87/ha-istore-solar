@@ -5,9 +5,10 @@ cloud portal at `home.istore.net.au`.
 
 ## Status
 
-Version 0.3.0 is a private experimental read-only build. It uses a manually
+Version 0.3.1 is a private experimental read-only build. It uses a manually
 copied bearer token from the iStore web portal and exposes provisional
-cumulative energy sensors for Home Assistant Energy Dashboard validation.
+cumulative solar and battery energy sensors for Home Assistant Energy Dashboard
+validation.
 
 Automatic username/password login, automatic token refresh, and public-release
 Energy Dashboard validation are not complete. Do not use this integration for
@@ -45,9 +46,9 @@ automation, billing, grid settlement, safety, or any other critical purpose.
 - Battery state of charge, in %
 - Energy charged today, in kWh
 - Energy discharged today, in kWh
+- Grid energy imported today, in kWh
+- Grid energy exported today, in kWh
 - Total solar production, in kWh, experimental
-- Total grid imported energy, in kWh, experimental
-- Total grid exported energy, in kWh, experimental
 - Total battery charged energy, in kWh, experimental
 - Total battery discharged energy, in kWh, experimental
 - Site, inverter, and battery status code diagnostics
@@ -65,8 +66,8 @@ discharging.
 - Battery charging power = `max(battery_power, 0)`
 - Battery discharging power = `max(-battery_power, 0)`
 
-The daily battery energy sensors come from daily-resetting API fields and use
-`total`, not `total_increasing`.
+The daily battery and grid energy sensors come from daily-resetting API fields
+and use `total`, not `total_increasing`.
 
 The site, inverter, and battery status entities intentionally expose raw numeric
 codes only. Captured responses have shown codes such as `0`, `1`, and `2`, but
@@ -74,13 +75,11 @@ the API evidence does not yet include a confirmed enum mapping.
 
 ## Experimental Energy Dashboard
 
-Version 0.3.0 exposes five cumulative entities for private validation:
+Version 0.3.1 exposes three cumulative entities for private validation:
 
 | Energy Dashboard slot | Entity |
 | --- | --- |
 | Solar production | Total solar production |
-| Grid consumption | Total grid imported energy |
-| Return to grid | Total grid exported energy |
 | Battery energy in | Total battery charged energy |
 | Battery energy out | Total battery discharged energy |
 
@@ -89,15 +88,23 @@ Experimental source mappings:
 | Entity | Source field |
 | --- | --- |
 | Total solar production | `TotalActiveProduction:BOL`, falling back to `ActiveProduction:BOL` |
-| Total grid imported energy | `METER.APConsumed` |
-| Total grid exported energy | `METER.APProduction` |
 | Total battery charged energy | `BS.TotalChargingEng` |
 | Total battery discharged energy | `BS.TotalDischargingEng` |
+
+Current live testing shows plausible lifetime-scale values for these private
+validation sensors: solar around 8.1 MWh, battery charged around 2.58 MWh, and
+battery discharged around 2.57 MWh. Continue monitoring for midnight resets or
+unexpected decreases.
 
 These mappings and reset semantics are still being validated against the portal.
 This private test build may generate incorrect long-term statistics if any field
 resets, decreases, or represents a period total rather than a lifetime total.
 Public releases should not rely on these entities until validation is complete.
+
+Do not use `Grid energy imported today` or `Grid energy exported today` in the
+Energy Dashboard. Live values from `METER.APConsumed` and `METER.APProduction`
+currently resemble current-day import/export totals, not lifetime counters.
+Genuine lifetime grid import/export counters have not been confirmed yet.
 
 ## Manual Installation
 

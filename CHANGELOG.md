@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.1
+
+- Corrected `METER.APConsumed` and `METER.APProduction` from experimental
+  lifetime grid sensors to daily grid import/export energy sensors.
+- Renamed grid energy entity keys to `grid_energy_imported_today` and
+  `grid_energy_exported_today`.
+- Changed grid energy state class from `total_increasing` to `total` because
+  live values resemble daily counters.
+- Removed grid energy sensors from the documented Energy Dashboard setup.
+- Added an entity-registry migration for the two private experimental grid
+  unique IDs where Home Assistant supports it.
+
 ## 0.3.0
 
 - Added an options flow for manual access-token replacement and configurable

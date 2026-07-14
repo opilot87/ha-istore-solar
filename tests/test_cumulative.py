@@ -66,13 +66,13 @@ class TestCumulativeHelpers(unittest.TestCase):
             observations,
             previous,
             decreased,
-            "total_grid_imported_energy",
+            "total_solar_production",
             "bad",
         )
 
         self.assertIsNone(value)
-        self.assertTrue(observations["total_grid_imported_energy"].detected)
-        self.assertTrue(observations["total_grid_imported_energy"].malformed)
+        self.assertTrue(observations["total_solar_production"].detected)
+        self.assertTrue(observations["total_solar_production"].malformed)
 
     def test_decrease_detection_preserves_source_value(self) -> None:
         observations = {}
@@ -106,8 +106,6 @@ class TestCumulativeHelpers(unittest.TestCase):
 
         for sensor_key, raw_value in (
             ("total_solar_production", "8116.73"),
-            ("total_grid_imported_energy", "34.12"),
-            ("total_grid_exported_energy", 0),
             ("total_battery_charged_energy", 1234.5),
             ("total_battery_discharged_energy", "987.6"),
         ):
