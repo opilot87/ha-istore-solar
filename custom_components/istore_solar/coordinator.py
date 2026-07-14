@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import timedelta
 
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
@@ -26,13 +27,15 @@ class IStoreSolarDataUpdateCoordinator(DataUpdateCoordinator[IStoreSolarTelemetr
         self,
         hass: HomeAssistant,
         client: IStoreSolarApiClient,
+        *,
+        update_interval: timedelta = DEFAULT_SCAN_INTERVAL,
     ) -> None:
         """Initialize the coordinator."""
         super().__init__(
             hass,
             LOGGER,
             name=DOMAIN,
-            update_interval=DEFAULT_SCAN_INTERVAL,
+            update_interval=update_interval,
         )
         self.client = client
 

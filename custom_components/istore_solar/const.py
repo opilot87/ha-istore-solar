@@ -7,9 +7,13 @@ from datetime import timedelta
 DOMAIN = "istore_solar"
 DEFAULT_NAME = "iStore Solar"
 DEFAULT_SCAN_INTERVAL = timedelta(seconds=30)
+DEFAULT_SCAN_INTERVAL_SECONDS = 30
+MIN_SCAN_INTERVAL_SECONDS = 15
+MAX_SCAN_INTERVAL_SECONDS = 300
 
 CONF_EMAIL = "email"
 CONF_ACCESS_TOKEN = "access_token"
+CONF_SCAN_INTERVAL = "scan_interval"
 
 ATTRIBUTION = "Data provided by the iStore Solar cloud portal"
 MANUFACTURER = "iStore"
@@ -30,6 +34,11 @@ SENSOR_BATTERY_DISCHARGING_POWER = "battery_discharging_power"
 SENSOR_BATTERY_SOC = "battery_state_of_charge"
 SENSOR_BATTERY_CHARGED_TODAY = "battery_energy_charged_today"
 SENSOR_BATTERY_DISCHARGED_TODAY = "battery_energy_discharged_today"
+SENSOR_TOTAL_SOLAR_PRODUCTION = "total_solar_production"
+SENSOR_TOTAL_GRID_IMPORTED_ENERGY = "total_grid_imported_energy"
+SENSOR_TOTAL_GRID_EXPORTED_ENERGY = "total_grid_exported_energy"
+SENSOR_TOTAL_BATTERY_CHARGED_ENERGY = "total_battery_charged_energy"
+SENSOR_TOTAL_BATTERY_DISCHARGED_ENERGY = "total_battery_discharged_energy"
 SENSOR_SITE_STATUS = "site_status"
 SENSOR_INVERTER_STATUS = "inverter_status"
 SENSOR_BATTERY_STATUS = "battery_status"

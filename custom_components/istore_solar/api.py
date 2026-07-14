@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 from asyncio import TimeoutError as AsyncTimeoutError
 from dataclasses import dataclass, field
+from datetime import datetime
 import json
 import logging
-import re
 import time
 from typing import Any, Final, NoReturn
 
@@ -32,50 +33,35 @@ from .const import (
     SENSOR_INVERTER_STATUS,
     SENSOR_SITE_STATUS,
     SENSOR_SOLAR_POWER,
+    SENSOR_TOTAL_BATTERY_CHARGED_ENERGY,
+    SENSOR_TOTAL_BATTERY_DISCHARGED_ENERGY,
+    SENSOR_TOTAL_GRID_EXPORTED_ENERGY,
+    SENSOR_TOTAL_GRID_IMPORTED_ENERGY,
+    SENSOR_TOTAL_SOLAR_PRODUCTION,
+)
+from .cumulative import (
+    CumulativeFieldObservation,
+    observe_cumulative_value,
 )
 from .power import inverted_positive_power, positive_power
+from .privacy import (
+    redact_sensitive_data,
+    sanitize_content_type as _sanitize_content_type,
+    sanitize_response_preview as _sanitize_response_preview,
+    sanitize_text as _sanitize_text,
+)
 
-REDACTED: Final = "**REDACTED**"
 REQUEST_TIMEOUT: Final = ClientTimeout(total=20)
 LOGGER = logging.getLogger(__name__)
-MAX_RESPONSE_PREVIEW_LENGTH: Final = 240
 PERMISSION_DENIED_CODE: Final = 88203
 JSON_UNSET: Final = object()
 ASSET_TREE_SITE_TYPE: Final = "Hossain-site"
-
-SENSITIVE_KEYS: Final[tuple[str, ...]] = (
-    "account",
-    "address",
-    "authorization",
-    "cookie",
-    "customer",
-    "device",
-    "email",
-    "id",
-    "latitude",
-    "longitude",
-    "mdm",
-    "name",
-    "nmi",
-    "owner",
-    "password",
-    "phone",
-    "serial",
-    "session",
-    "sid",
-    "sn",
-    "token",
-    "uri",
-    "user",
+BATTERY_TOTAL_MEASUREMENT_POINTS: Final = (
+    "BS.TotalChargingEng,BS.TotalDischargingEng"
 )
-
-SENSITIVE_VALUE_PATTERNS: Final[tuple[re.Pattern[str], ...]] = (
-    re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]+", re.IGNORECASE),
-    re.compile(r"(?i)(authorization|cookie|password|token|sid)=([^&\s]+)"),
-    re.compile(r"\b[A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{12}\b"),
-    re.compile(r"\b[A-Za-z0-9_-]{24,}\b"),
-    re.compile(r"\b[\w.+-]+@[\w.-]+\.\w+\b"),
-)
+TEMPORARY_HTTP_STATUSES: Final = {429, 502, 503, 504}
+MAX_TEMPORARY_REQUEST_ATTEMPTS: Final = 2
+RETRY_BACKOFF_SECONDS: Final = 1
 
 SITE_LIVE_MEASUREMENT_POINTS: Final = ",".join(
     (
@@ -197,6 +183,9 @@ class IStoreSolarDevice:
     model: str | None = None
     manufacturer: str | None = None
     via_device: tuple[str, str] | None = None
+    serial_number: str | None = None
+    sw_version: str | None = None
+    hw_version: str | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -214,6 +203,12 @@ class IStoreSolarTelemetry:
     site: IStoreSolarDevice
     devices: dict[str, IStoreSolarDevice] = field(default_factory=dict)
     values: dict[str, IStoreSolarSensorValue] = field(default_factory=dict)
+    discovered_asset_types: tuple[str, ...] = ()
+    cumulative_observations: dict[str, CumulativeFieldObservation] = field(
+        default_factory=dict
+    )
+    selected_solar_production_source: str | None = None
+    meter_asset_discovered: bool = False
 
 
 class IStoreSolarApiClient:
@@ -234,6 +229,13 @@ class IStoreSolarApiClient:
         self._locale = locale
         self._user_info: dict[str, Any] | None = None
         self._discovered_site: _DiscoveredSite | None = None
+        self._previous_cumulative_values: dict[str, float | int] = {}
+        self._cumulative_decreases: set[str] = set()
+
+    @property
+    def discovery_cached(self) -> bool:
+        """Return whether site discovery has completed and been cached."""
+        return self._discovered_site is not None
 
     async def async_get_user_info(self) -> dict[str, Any]:
         """Return account metadata for the configured bearer token."""
@@ -328,10 +330,56 @@ class IStoreSolarApiClient:
             _raise_logged_api_exception(err)
         return data
 
+    async def async_get_battery_total_energy(
+        self,
+        battery_id: str,
+    ) -> dict[str, Any]:
+        """Return optional battery total energy counters from the confirmed endpoint."""
+        now = datetime.now()
+        response = await self._request(
+            "POST",
+            "/hossain-bff/monitor/v1.0/measurement-point/time-series",
+            json_data={
+                "mdmTypes": "Res_Storage",
+                "mdmIds": battery_id,
+                "startTime": now.replace(
+                    hour=0,
+                    minute=0,
+                    second=0,
+                    microsecond=0,
+                ).strftime("%Y-%m-%d %H:%M:%S"),
+                "endTime": now.strftime("%Y-%m-%d %H:%M:%S"),
+                "interval": "5m",
+                "measurementPoints": BATTERY_TOTAL_MEASUREMENT_POINTS,
+                "autoInterpolate": True,
+            },
+            operation="optional battery cumulative retrieval",
+        )
+        data = response.payload.get("data")
+        if not isinstance(data, list):
+            err = IStoreSolarMalformedResponseError(
+                "battery cumulative response missing data",
+                path=response.path,
+                status=response.status,
+                content_type=response.content_type,
+                response_preview=response.response_preview,
+                operation="optional battery cumulative retrieval",
+            )
+            _raise_logged_api_exception(err)
+
+        for item in reversed(data):
+            if isinstance(item, dict) and any(
+                field_name in item
+                for field_name in ("BS.TotalChargingEng", "BS.TotalDischargingEng")
+            ):
+                return item
+        return {}
+
     async def async_get_live_telemetry(self) -> IStoreSolarTelemetry:
         """Return normalized live telemetry for the first discovered site."""
         discovered_site = await self._async_discover_site()
         site_id = discovered_site.site_id
+        battery_total_energy: dict[str, Any] = {}
 
         try:
             overview_detail = await self.async_get_asset_detail(
@@ -353,11 +401,30 @@ class IStoreSolarApiClient:
                 operation="asset detail retrieval",
             ) from err
 
+        battery_asset = _first_asset_by_type(discovered_site.assets, "Res_Storage")
+        battery_id = _asset_identifier(battery_asset)
+        if battery_id is not None:
+            try:
+                battery_total_energy = await self.async_get_battery_total_energy(
+                    battery_id
+                )
+            except IStoreSolarError as err:
+                LOGGER.warning(
+                    (
+                        "iStore Solar optional battery cumulative request failed: "
+                        "path=%s status=%s exception_type=%s"
+                    ),
+                    err.path or "unknown",
+                    err.status if err.status is not None else "unknown",
+                    type(err).__name__,
+                )
+
         return self._normalize_telemetry(
             site_id,
             overview_detail,
             site_live_detail,
             discovered_site.assets,
+            battery_total_energy,
         )
 
     async def async_get_data(self) -> IStoreSolarTelemetry:
@@ -466,74 +533,104 @@ class IStoreSolarApiClient:
             headers.update(extra_headers)
 
         LOGGER.debug("Starting iStore Solar setup-stage request: %s", operation)
-        try:
-            request_kwargs: dict[str, Any] = {
-                "headers": headers,
-                "params": params,
-                "timeout": REQUEST_TIMEOUT,
-            }
-            if raw_data is not None:
-                request_kwargs["data"] = raw_data
-            elif json_data is not JSON_UNSET:
-                request_kwargs["json"] = json_data
-            response = await self._session.request(
-                method,
-                f"{self._base_url}{path}",
-                **request_kwargs,
-            )
-            content_type = _sanitize_content_type(response.headers.get("Content-Type"))
-            response_text = await response.text()
-            response_preview = _sanitize_response_preview(response_text, content_type)
-            if response.status in (401, 403):
-                raise IStoreSolarAuthenticationError(
-                    "access token was rejected",
-                    path=path,
-                    status=response.status,
-                    content_type=content_type,
-                    response_preview=response_preview,
-                    operation=operation,
-                )
-            if response.status >= 400:
-                raise IStoreSolarApiError(
-                    "iStore Solar request failed",
-                    path=path,
-                    status=response.status,
-                    content_type=content_type,
-                    response_preview=response_preview,
-                    operation=operation,
-                )
+        last_connection_error: IStoreSolarConnectionError | None = None
+        for attempt in range(1, MAX_TEMPORARY_REQUEST_ATTEMPTS + 1):
             try:
-                payload = json.loads(response_text)
-            except ValueError as err:
-                raise IStoreSolarMalformedResponseError(
-                    "response was not valid JSON",
+                request_kwargs: dict[str, Any] = {
+                    "headers": headers,
+                    "params": params,
+                    "timeout": REQUEST_TIMEOUT,
+                }
+                if raw_data is not None:
+                    request_kwargs["data"] = raw_data
+                elif json_data is not JSON_UNSET:
+                    request_kwargs["json"] = json_data
+                response = await self._session.request(
+                    method,
+                    f"{self._base_url}{path}",
+                    **request_kwargs,
+                )
+                content_type = _sanitize_content_type(
+                    response.headers.get("Content-Type")
+                )
+                response_text = await response.text()
+                response_preview = _sanitize_response_preview(
+                    response_text, content_type
+                )
+                if response.status in (401, 403):
+                    raise IStoreSolarAuthenticationError(
+                        "access token was rejected",
+                        path=path,
+                        status=response.status,
+                        content_type=content_type,
+                        response_preview=response_preview,
+                        operation=operation,
+                    )
+                if response.status in TEMPORARY_HTTP_STATUSES and attempt == 1:
+                    LOGGER.debug(
+                        "Retrying temporary iStore Solar HTTP status: path=%s status=%s",
+                        path,
+                        response.status,
+                    )
+                    await asyncio.sleep(RETRY_BACKOFF_SECONDS)
+                    continue
+                if response.status >= 400:
+                    raise IStoreSolarApiError(
+                        "iStore Solar request failed",
+                        path=path,
+                        status=response.status,
+                        content_type=content_type,
+                        response_preview=response_preview,
+                        operation=operation,
+                    )
+                try:
+                    payload = json.loads(response_text)
+                except ValueError as err:
+                    raise IStoreSolarMalformedResponseError(
+                        "response was not valid JSON",
+                        path=path,
+                        status=response.status,
+                        content_type=content_type,
+                        response_preview=response_preview,
+                        operation=operation,
+                    ) from err
+                break
+            except (AsyncTimeoutError, TimeoutError) as err:
+                last_connection_error = IStoreSolarConnectionError(
+                    "timed out connecting to iStore Solar",
                     path=path,
-                    status=response.status,
-                    content_type=content_type,
-                    response_preview=response_preview,
                     operation=operation,
-                ) from err
-        except (AsyncTimeoutError, TimeoutError) as err:
-            error = IStoreSolarConnectionError(
-                "timed out connecting to iStore Solar",
-                path=path,
-                operation=operation,
-            )
-            _log_api_exception(error, err)
-            raise error from err
-        except ClientError as err:
-            error = IStoreSolarConnectionError(
-                "could not connect to iStore Solar",
-                path=path,
-                operation=operation,
-            )
-            _log_api_exception(error, err)
-            raise error from err
-        except IStoreSolarError as err:
-            _log_api_exception(err, err)
-            raise
-        finally:
-            LOGGER.debug("Finished iStore Solar setup-stage request: %s", operation)
+                )
+                if attempt == 1:
+                    LOGGER.debug(
+                        "Retrying temporary iStore Solar timeout: path=%s", path
+                    )
+                    await asyncio.sleep(RETRY_BACKOFF_SECONDS)
+                    continue
+                _log_api_exception(last_connection_error, err)
+                raise last_connection_error from err
+            except ClientError as err:
+                last_connection_error = IStoreSolarConnectionError(
+                    "could not connect to iStore Solar",
+                    path=path,
+                    operation=operation,
+                )
+                if attempt == 1:
+                    LOGGER.debug(
+                        "Retrying temporary iStore Solar client error: path=%s",
+                        path,
+                    )
+                    await asyncio.sleep(RETRY_BACKOFF_SECONDS)
+                    continue
+                _log_api_exception(last_connection_error, err)
+                raise last_connection_error from err
+            except IStoreSolarError as err:
+                _log_api_exception(err, err)
+                raise
+        else:
+            assert last_connection_error is not None
+            raise last_connection_error
+        LOGGER.debug("Finished iStore Solar setup-stage request: %s", operation)
 
         if not isinstance(payload, dict):
             err = IStoreSolarMalformedResponseError(
@@ -609,8 +706,10 @@ class IStoreSolarApiClient:
         overview_detail: dict[str, Any],
         site_live_detail: dict[str, Any],
         assets: list[dict[str, Any]],
+        battery_total_energy: dict[str, Any] | None = None,
     ) -> IStoreSolarTelemetry:
         """Normalize API responses into Home Assistant entity data."""
+        battery_total_energy = battery_total_energy or {}
         overview_item = _detail_item(overview_detail, site_id)
         site_live_item = _detail_item(site_live_detail, site_id)
 
@@ -626,6 +725,7 @@ class IStoreSolarApiClient:
         devices = _devices_from_assets(assets, site_device.identifiers)
         measurement_points = _dict_value(site_live_item, "measurementPoints")
         overview_points = _dict_value(overview_item, "measurementPoints")
+        overview_metrics = _dict_value(overview_item, "metrics")
         grid_power = _first_point_value(
             measurement_points,
             ("PUB_SITE.METERActivePW", "METER.ActivePW"),
@@ -667,9 +767,13 @@ class IStoreSolarApiClient:
 
         inverter_asset = _first_asset_by_type(assets, "Res_Inverter")
         battery_asset = _first_asset_by_type(assets, "Res_Storage")
+        meter_asset = _first_asset_by_type(assets, "Res_Meter")
 
         inverter_points = _dict_value(inverter_asset, "measurementPoints")
         battery_points = _dict_value(battery_asset, "measurementPoints")
+        meter_points = _dict_value(meter_asset, "measurementPoints")
+        cumulative_observations: dict[str, CumulativeFieldObservation] = {}
+        selected_solar_source = _selected_solar_production_source(overview_metrics)
 
         values[SENSOR_INVERTER_STATUS] = IStoreSolarSensorValue(
             _first_point_value(inverter_points, ("INV.State", "DeviceState"))
@@ -684,7 +788,167 @@ class IStoreSolarApiClient:
             _first_point_value(battery_points, ("BS.DischargingEngDay",))
         )
 
-        return IStoreSolarTelemetry(site=site_device, devices=devices, values=values)
+        values[SENSOR_TOTAL_SOLAR_PRODUCTION] = IStoreSolarSensorValue(
+            self._cumulative_value_from_metric(
+                cumulative_observations,
+                selected_solar_source,
+                overview_metrics,
+                SENSOR_TOTAL_SOLAR_PRODUCTION,
+            )
+            if selected_solar_source is not None
+            else None
+        )
+        if selected_solar_source is not None:
+            LOGGER.debug(
+                "iStore Solar selected cumulative solar source field=%s",
+                selected_solar_source,
+            )
+        else:
+            _mark_missing(
+                cumulative_observations,
+                SENSOR_TOTAL_SOLAR_PRODUCTION,
+                ("TotalActiveProduction:BOL", "ActiveProduction:BOL"),
+            )
+
+        meter_has_valid_cumulative = False
+        grid_import_value = self._cumulative_value_from_point(
+            cumulative_observations,
+            "METER.APConsumed",
+            meter_points,
+            SENSOR_TOTAL_GRID_IMPORTED_ENERGY,
+        )
+        if grid_import_value is not None:
+            meter_has_valid_cumulative = True
+        values[SENSOR_TOTAL_GRID_IMPORTED_ENERGY] = IStoreSolarSensorValue(
+            grid_import_value
+        )
+
+        grid_export_value = self._cumulative_value_from_point(
+            cumulative_observations,
+            "METER.APProduction",
+            meter_points,
+            SENSOR_TOTAL_GRID_EXPORTED_ENERGY,
+        )
+        if grid_export_value is not None:
+            meter_has_valid_cumulative = True
+        values[SENSOR_TOTAL_GRID_EXPORTED_ENERGY] = IStoreSolarSensorValue(
+            grid_export_value
+        )
+
+        if not meter_has_valid_cumulative:
+            devices.pop("meter", None)
+
+        values[SENSOR_TOTAL_BATTERY_CHARGED_ENERGY] = IStoreSolarSensorValue(
+            self._cumulative_value_from_raw(
+                cumulative_observations,
+                "BS.TotalChargingEng",
+                battery_total_energy.get("BS.TotalChargingEng"),
+                SENSOR_TOTAL_BATTERY_CHARGED_ENERGY,
+            )
+        )
+        values[SENSOR_TOTAL_BATTERY_DISCHARGED_ENERGY] = IStoreSolarSensorValue(
+            self._cumulative_value_from_raw(
+                cumulative_observations,
+                "BS.TotalDischargingEng",
+                battery_total_energy.get("BS.TotalDischargingEng"),
+                SENSOR_TOTAL_BATTERY_DISCHARGED_ENERGY,
+            )
+        )
+
+        return IStoreSolarTelemetry(
+            site=site_device,
+            devices=devices,
+            values=values,
+            discovered_asset_types=tuple(
+                sorted(
+                    {
+                        asset_type
+                        for asset in assets
+                        if (asset_type := _asset_type(asset)) is not None
+                    }
+                )
+            ),
+            cumulative_observations=cumulative_observations,
+            selected_solar_production_source=selected_solar_source,
+            meter_asset_discovered=bool(meter_asset),
+        )
+
+    def _cumulative_value_from_metric(
+        self,
+        observations: dict[str, CumulativeFieldObservation],
+        source_field: str,
+        metrics: dict[str, Any],
+        sensor_key: str,
+    ) -> float | int | None:
+        """Extract a cumulative value from a metric object."""
+        metric = _dict_value(metrics, source_field)
+        return self._cumulative_value_from_raw(
+            observations,
+            source_field,
+            metric.get("value") if metric else None,
+            sensor_key,
+        )
+
+    def _cumulative_value_from_point(
+        self,
+        observations: dict[str, CumulativeFieldObservation],
+        source_field: str,
+        points: dict[str, Any],
+        sensor_key: str,
+    ) -> float | int | None:
+        """Extract a cumulative value from a measurement-point object."""
+        point = _dict_value(points, source_field)
+        return self._cumulative_value_from_raw(
+            observations,
+            source_field,
+            point.get("value") if point else None,
+            sensor_key,
+        )
+
+    def _cumulative_value_from_raw(
+        self,
+        observations: dict[str, CumulativeFieldObservation],
+        source_field: str,
+        raw_value: Any,
+        sensor_key: str,
+    ) -> float | int | None:
+        """Normalize and observe one cumulative counter source."""
+        value = observe_cumulative_value(
+            observations,
+            self._previous_cumulative_values,
+            self._cumulative_decreases,
+            sensor_key,
+            raw_value,
+        )
+        observation = observations[sensor_key]
+        if observation.missing:
+            LOGGER.debug(
+                "iStore Solar cumulative field missing: field=%s sensor=%s",
+                source_field,
+                sensor_key,
+            )
+            return None
+        if observation.malformed:
+            LOGGER.debug(
+                "iStore Solar cumulative field malformed: field=%s sensor=%s type=%s",
+                source_field,
+                sensor_key,
+                observation.value_type,
+            )
+            return None
+        if observation.decreased:
+            LOGGER.warning(
+                "iStore Solar cumulative counter decreased: field=%s sensor=%s",
+                source_field,
+                sensor_key,
+            )
+        LOGGER.debug(
+            "iStore Solar cumulative field detected: field=%s sensor=%s type=%s",
+            source_field,
+            sensor_key,
+            observation.value_type,
+        )
+        return value
 
 
 def _site_candidates_from_asset_tree(
@@ -839,6 +1103,30 @@ def _detail_item(detail: dict[str, Any], preferred_id: str) -> dict[str, Any]:
     return {}
 
 
+def _selected_solar_production_source(metrics: dict[str, Any]) -> str | None:
+    """Return the preferred available solar production total field."""
+    for field_name in ("TotalActiveProduction:BOL", "ActiveProduction:BOL"):
+        metric = metrics.get(field_name)
+        if isinstance(metric, dict) and metric.get("value") is not None:
+            return field_name
+    return None
+
+
+def _mark_missing(
+    observations: dict[str, CumulativeFieldObservation],
+    sensor_key: str,
+    source_fields: tuple[str, ...],
+) -> None:
+    """Mark an optional cumulative source as missing."""
+    observation = observations.setdefault(sensor_key, CumulativeFieldObservation())
+    observation.missing = True
+    LOGGER.debug(
+        "iStore Solar cumulative fields missing: fields=%s sensor=%s",
+        ",".join(source_fields),
+        sensor_key,
+    )
+
+
 def _devices_from_assets(
     assets: list[dict[str, Any]],
     site_identifier: tuple[str, str],
@@ -850,7 +1138,7 @@ def _devices_from_assets(
         mdm_type = _string_value(asset.get("mdmType")) or _string_value(
             attrs.get("mdmType")
         )
-        mdm_id = _string_value(asset.get("mdmId")) or _string_value(attrs.get("mdmId"))
+        mdm_id = _asset_identifier(asset)
         if mdm_type is None or mdm_id is None:
             continue
 
@@ -866,9 +1154,27 @@ def _devices_from_assets(
             model=model,
             manufacturer=MANUFACTURER,
             via_device=site_identifier,
+            serial_number=_serial_number_from_attrs(attrs),
+            sw_version=_string_value(attrs.get("version"))
+            or _string_value(attrs.get("rack1Version")),
+            hw_version=_string_value(attrs.get("modelId")),
         )
 
     return devices
+
+
+def _asset_identifier(asset: dict[str, Any]) -> str | None:
+    """Return the stable MDM identifier from an asset-list row."""
+    attrs = _dict_value(asset, "attributes")
+    return _string_value(asset.get("mdmId")) or _string_value(attrs.get("mdmId"))
+
+
+def _serial_number_from_attrs(attrs: dict[str, Any]) -> str | None:
+    """Return the confirmed serial-number style field for device metadata."""
+    for field_name in ("sn", "rack1SN", "rack1PackSN"):
+        if serial_number := _string_value(attrs.get(field_name)):
+            return serial_number
+    return None
 
 
 def _device_key_for_type(mdm_type: str) -> str | None:
@@ -933,65 +1239,6 @@ def _string_value(value: Any) -> str | None:
         return None
     stripped = value.strip()
     return stripped or None
-
-
-def redact_sensitive_data(value: Any) -> Any:
-    """Return a recursively redacted copy of diagnostic data."""
-    if isinstance(value, dict):
-        redacted: dict[str, Any] = {}
-        for key, item in value.items():
-            lowered = str(key).lower()
-            if any(sensitive in lowered for sensitive in SENSITIVE_KEYS):
-                redacted[key] = REDACTED
-            else:
-                redacted[key] = redact_sensitive_data(item)
-        return redacted
-
-    if isinstance(value, list):
-        return [redact_sensitive_data(item) for item in value]
-
-    if isinstance(value, tuple):
-        return tuple(redact_sensitive_data(item) for item in value)
-
-    return value
-
-
-def _sanitize_content_type(content_type: str | None) -> str | None:
-    """Return a safe response content type without parameters."""
-    if content_type is None:
-        return None
-    media_type = content_type.split(";", 1)[0].strip().lower()
-    return _sanitize_text(media_type) if media_type else None
-
-
-def _sanitize_response_preview(text: str, content_type: str | None) -> str | None:
-    """Return a short sanitized response preview when it is safe enough."""
-    if not text:
-        return None
-
-    preview_value: Any = text
-    if content_type is not None and "json" in content_type:
-        try:
-            preview_value = redact_sensitive_data(json.loads(text))
-        except ValueError:
-            preview_value = text
-
-    if isinstance(preview_value, str):
-        preview_text = preview_value
-    else:
-        preview_text = json.dumps(preview_value, sort_keys=True)
-    preview = _sanitize_text(preview_text)
-    if not preview:
-        return None
-    return preview[:MAX_RESPONSE_PREVIEW_LENGTH]
-
-
-def _sanitize_text(value: str) -> str:
-    """Remove token-looking and identifier-looking values from diagnostic text."""
-    sanitized = " ".join(value.split())
-    for pattern in SENSITIVE_VALUE_PATTERNS:
-        sanitized = pattern.sub(REDACTED, sanitized)
-    return sanitized
 
 
 def _log_api_exception(err: IStoreSolarError, exc_info: BaseException) -> None:

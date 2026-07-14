@@ -37,6 +37,11 @@ from .const import (
     SENSOR_INVERTER_STATUS,
     SENSOR_SITE_STATUS,
     SENSOR_SOLAR_POWER,
+    SENSOR_TOTAL_BATTERY_CHARGED_ENERGY,
+    SENSOR_TOTAL_BATTERY_DISCHARGED_ENERGY,
+    SENSOR_TOTAL_GRID_EXPORTED_ENERGY,
+    SENSOR_TOTAL_GRID_IMPORTED_ENERGY,
+    SENSOR_TOTAL_SOLAR_PRODUCTION,
 )
 from .coordinator import IStoreSolarDataUpdateCoordinator
 
@@ -133,6 +138,50 @@ SENSOR_DESCRIPTIONS: tuple[IStoreSolarSensorEntityDescription, ...] = (
         state_class=SensorStateClass.TOTAL,
     ),
     IStoreSolarSensorEntityDescription(
+        key=SENSOR_TOTAL_SOLAR_PRODUCTION,
+        translation_key=SENSOR_TOTAL_SOLAR_PRODUCTION,
+        device_class=SensorDeviceClass.ENERGY,
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        suggested_display_precision=2,
+    ),
+    IStoreSolarSensorEntityDescription(
+        key=SENSOR_TOTAL_GRID_IMPORTED_ENERGY,
+        translation_key=SENSOR_TOTAL_GRID_IMPORTED_ENERGY,
+        device_key="meter",
+        device_class=SensorDeviceClass.ENERGY,
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        suggested_display_precision=2,
+    ),
+    IStoreSolarSensorEntityDescription(
+        key=SENSOR_TOTAL_GRID_EXPORTED_ENERGY,
+        translation_key=SENSOR_TOTAL_GRID_EXPORTED_ENERGY,
+        device_key="meter",
+        device_class=SensorDeviceClass.ENERGY,
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        suggested_display_precision=2,
+    ),
+    IStoreSolarSensorEntityDescription(
+        key=SENSOR_TOTAL_BATTERY_CHARGED_ENERGY,
+        translation_key=SENSOR_TOTAL_BATTERY_CHARGED_ENERGY,
+        device_key="battery",
+        device_class=SensorDeviceClass.ENERGY,
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        suggested_display_precision=2,
+    ),
+    IStoreSolarSensorEntityDescription(
+        key=SENSOR_TOTAL_BATTERY_DISCHARGED_ENERGY,
+        translation_key=SENSOR_TOTAL_BATTERY_DISCHARGED_ENERGY,
+        device_key="battery",
+        device_class=SensorDeviceClass.ENERGY,
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        suggested_display_precision=2,
+    ),
+    IStoreSolarSensorEntityDescription(
         key=SENSOR_SITE_STATUS,
         translation_key=SENSOR_SITE_STATUS,
         entity_category=EntityCategory.DIAGNOSTIC,
@@ -184,7 +233,9 @@ class IStoreSolarSensor(
         super().__init__(coordinator)
         self.entity_description = description
         device = self._device
-        unique_device_id = device.identifiers[1]
+        unique_device_id = (
+            device.identifiers[1] if device is not None else description.device_key
+        )
         self._attr_unique_id = f"{unique_device_id}_{description.key}"
 
     @property
@@ -205,15 +256,20 @@ class IStoreSolarSensor(
         )
 
     @property
-    def device_info(self) -> DeviceInfo:
+    def device_info(self) -> DeviceInfo | None:
         """Return device information for this entity."""
         device = self._device
+        if device is None:
+            return None
         return DeviceInfo(
             identifiers={device.identifiers},
             manufacturer=device.manufacturer,
             model=device.model,
             name=device.name,
             via_device=device.via_device,
+            serial_number=device.serial_number,
+            sw_version=device.sw_version,
+            hw_version=device.hw_version,
         )
 
     @property
@@ -224,7 +280,7 @@ class IStoreSolarSensor(
         return self.coordinator.data.values.get(self.entity_description.key)
 
     @property
-    def _device(self) -> IStoreSolarDevice:
+    def _device(self) -> IStoreSolarDevice | None:
         """Return the normalized device for this sensor."""
         default_site = IStoreSolarDevice(
             identifiers=(DOMAIN, "site"),
@@ -233,6 +289,8 @@ class IStoreSolarSensor(
         )
 
         if self.coordinator.data is None:
+            if self.entity_description.device_key == "meter":
+                return None
             if self.entity_description.device_key == "site":
                 return default_site
             return IStoreSolarDevice(
@@ -244,6 +302,9 @@ class IStoreSolarSensor(
 
         if self.entity_description.device_key == "site":
             return self.coordinator.data.site
+
+        if self.entity_description.device_key == "meter":
+            return self.coordinator.data.devices.get("meter")
 
         return self.coordinator.data.devices.get(
             self.entity_description.device_key,

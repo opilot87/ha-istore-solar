@@ -20,10 +20,12 @@
     "error": {
       "api_error": "The iStore API returned an error",
       "cannot_connect": "Failed to connect",
+      "invalid_scan_interval": "Polling interval must be between 15 and 300 seconds",
       "invalid_auth": "Invalid or expired access token",
       "malformed_response": "The iStore API response could not be understood",
       "server_error": "The iStore API returned an error",
       "unsupported_response": "This iStore account response is not supported yet",
+      "wrong_account": "The replacement token belongs to a different account",
       "unknown": "Unexpected error"
     },
     "abort": {
@@ -31,6 +33,27 @@
       "reauth_failed": "Could not find the existing iStore Solar entry",
       "reauth_successful": "The iStore Solar access token was updated",
       "wrong_account": "The replacement token belongs to a different account"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "iStore Solar options",
+        "description": "Update the manual access token or polling interval. Leave the access token blank to keep the current token. {error_detail}",
+        "data": {
+          "access_token": "Replacement access token",
+          "scan_interval": "Polling interval"
+        }
+      }
+    },
+    "error": {
+      "api_error": "The iStore API returned an error",
+      "cannot_connect": "Failed to connect",
+      "invalid_scan_interval": "Polling interval must be between 15 and 300 seconds",
+      "invalid_auth": "Invalid or expired access token",
+      "unsupported_response": "This iStore account response is not supported yet",
+      "wrong_account": "The replacement token belongs to a different account",
+      "unknown": "Unexpected error"
     }
   },
   "entity": {
@@ -67,6 +90,21 @@
       },
       "battery_energy_discharged_today": {
         "name": "Energy discharged today"
+      },
+      "total_solar_production": {
+        "name": "Total solar production"
+      },
+      "total_grid_imported_energy": {
+        "name": "Total grid imported energy"
+      },
+      "total_grid_exported_energy": {
+        "name": "Total grid exported energy"
+      },
+      "total_battery_charged_energy": {
+        "name": "Total battery charged energy"
+      },
+      "total_battery_discharged_energy": {
+        "name": "Total battery discharged energy"
       },
       "site_status": {
         "name": "Site status code"

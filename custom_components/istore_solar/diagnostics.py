@@ -8,6 +8,7 @@ from homeassistant.core import HomeAssistant
 
 from . import IStoreSolarConfigEntry
 from .api import redact_sensitive_data
+from .const import CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL_SECONDS
 
 
 async def async_get_config_entry_diagnostics(
@@ -17,23 +18,69 @@ async def async_get_config_entry_diagnostics(
     """Return diagnostics for a config entry with sensitive data redacted."""
     coordinator = entry.runtime_data
     telemetry = coordinator.data
+    client = coordinator.client
+    last_success_time = getattr(coordinator, "last_update_success_time", None)
 
     data: dict[str, Any] = {
         "entry": {
-            "title": entry.title,
-            "data": dict(entry.data),
+            "domain": entry.domain,
             "options": dict(entry.options),
+            "polling_interval_seconds": entry.options.get(
+                CONF_SCAN_INTERVAL,
+                DEFAULT_SCAN_INTERVAL_SECONDS,
+            ),
         },
         "coordinator": {
             "last_update_success": coordinator.last_update_success,
+            "last_update_success_time": str(last_success_time)
+            if last_success_time
+            else None,
             "last_exception": str(coordinator.last_exception)
             if coordinator.last_exception
             else None,
+        },
+        "api": {
+            "discovery_cached": client.discovery_cached,
         },
         "telemetry": {
             "has_data": telemetry is not None,
             "sensor_keys": sorted(telemetry.values) if telemetry else [],
             "device_keys": sorted(telemetry.devices) if telemetry else [],
+            "discovered_asset_types": list(telemetry.discovered_asset_types)
+            if telemetry
+            else [],
+            "meter_asset_discovered": telemetry.meter_asset_discovered
+            if telemetry
+            else False,
+            "source_availability": {
+                key: {
+                    "available": value.available,
+                    "has_native_value": value.native_value is not None,
+                    "value_type": type(value.native_value).__name__
+                    if value.native_value is not None
+                    else "missing",
+                }
+                for key, value in telemetry.values.items()
+            }
+            if telemetry
+            else {},
+            "cumulative": {
+                "selected_solar_production_source": (
+                    telemetry.selected_solar_production_source
+                ),
+                "observations": {
+                    key: {
+                        "detected": observation.detected,
+                        "missing": observation.missing,
+                        "malformed": observation.malformed,
+                        "decreased": observation.decreased,
+                        "value_type": observation.value_type,
+                    }
+                    for key, observation in telemetry.cumulative_observations.items()
+                },
+            }
+            if telemetry
+            else {},
         },
     }
 
