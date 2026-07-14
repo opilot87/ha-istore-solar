@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.4.0
+
+- Promoted validated meter lifetime counters to `Total grid imported energy`
+  and `Total grid exported energy`.
+- Added full documented Home Assistant Energy Dashboard mapping for solar, grid
+  import/export, and battery charge/discharge lifetime energy.
+- Added entity-registry migration from the v0.3.2 experimental grid lifetime
+  keys to the stable v0.4.0 keys.
+- Kept daily grid and battery energy counters separate from lifetime Energy
+  Dashboard sources.
+- Removed internal platform model IDs from Home Assistant hardware-version
+  metadata.
+- Updated public-readiness, troubleshooting, privacy, HACS, and branding
+  documentation.
+
 ## 0.3.2
 
 - Added disabled-by-default experimental meter lifetime candidates sourced from

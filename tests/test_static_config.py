@@ -9,6 +9,8 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 SENSOR_PY = ROOT / "custom_components" / "istore_solar" / "sensor.py"
 API_PY = ROOT / "custom_components" / "istore_solar" / "api.py"
+INIT_PY = ROOT / "custom_components" / "istore_solar" / "__init__.py"
+CONFIG_FLOW_PY = ROOT / "custom_components" / "istore_solar" / "config_flow.py"
 STRINGS_JSON = ROOT / "custom_components" / "istore_solar" / "strings.json"
 README_MD = ROOT / "README.md"
 
@@ -22,14 +24,14 @@ class TestStaticConfig(unittest.TestCase):
             "total_solar_production",
             "grid_energy_imported_today",
             "grid_energy_exported_today",
-            "experimental_total_grid_imported_energy",
-            "experimental_total_grid_exported_energy",
+            "total_grid_imported_energy",
+            "total_grid_exported_energy",
             "total_battery_charged_energy",
             "total_battery_discharged_energy",
         ):
             self.assertIn(f'"{suffix}"', text)
-        self.assertNotIn('"total_grid_imported_energy"', text)
-        self.assertNotIn('"total_grid_exported_energy"', text)
+        self.assertNotIn('"experimental_total_grid_imported_energy"', text)
+        self.assertNotIn('"experimental_total_grid_exported_energy"', text)
 
     def test_cumulative_sensors_are_energy_total_increasing_kwh(self) -> None:
         text = SENSOR_PY.read_text()
@@ -43,31 +45,31 @@ class TestStaticConfig(unittest.TestCase):
             9,
         )
 
-    def test_experimental_meter_total_entities_are_disabled_by_default(self) -> None:
+    def test_grid_total_entities_are_enabled_by_default(self) -> None:
         text = SENSOR_PY.read_text()
         description_start = text.index("SENSOR_DESCRIPTIONS")
         imported_section = text[
             text.index(
-                "SENSOR_EXPERIMENTAL_TOTAL_GRID_IMPORTED_ENERGY",
+                "SENSOR_TOTAL_GRID_IMPORTED_ENERGY",
                 description_start,
             ):
             text.index(
-                "SENSOR_EXPERIMENTAL_TOTAL_GRID_EXPORTED_ENERGY",
+                "SENSOR_TOTAL_GRID_EXPORTED_ENERGY",
                 description_start,
             )
         ]
         exported_section = text[
             text.index(
-                "SENSOR_EXPERIMENTAL_TOTAL_GRID_EXPORTED_ENERGY",
+                "SENSOR_TOTAL_GRID_EXPORTED_ENERGY",
                 description_start,
             ):
             text.index("SENSOR_TOTAL_BATTERY_CHARGED_ENERGY", description_start)
         ]
         self.assertIn("device_key=\"meter\"", imported_section)
-        self.assertIn("entity_registry_enabled_default=False", imported_section)
+        self.assertNotIn("entity_registry_enabled_default=False", imported_section)
         self.assertIn("SensorStateClass.TOTAL_INCREASING", imported_section)
         self.assertIn("device_key=\"meter\"", exported_section)
-        self.assertIn("entity_registry_enabled_default=False", exported_section)
+        self.assertNotIn("entity_registry_enabled_default=False", exported_section)
         self.assertIn("SensorStateClass.TOTAL_INCREASING", exported_section)
 
     def test_battery_total_request_uses_confirmed_shape(self) -> None:
@@ -93,30 +95,44 @@ class TestStaticConfig(unittest.TestCase):
             "Total solar production",
             "Grid energy imported today",
             "Grid energy exported today",
-            "Experimental total grid imported energy",
-            "Experimental total grid exported energy",
+            "Total grid imported energy",
+            "Total grid exported energy",
             "Total battery charged energy",
             "Total battery discharged energy",
         ):
             self.assertIn(name, text)
 
-    def test_grid_daily_sensors_are_not_documented_as_lifetime_energy_dashboard(self) -> None:
+    def test_energy_dashboard_mapping_documents_lifetime_sources(self) -> None:
         readme = README_MD.read_text()
-        self.assertIn("Do not use `Grid energy imported today`", readme)
-        self.assertNotIn("| Grid consumption | Total grid imported energy |", readme)
-        self.assertNotIn("| Return to grid | Total grid exported energy |", readme)
-        self.assertNotIn("Total grid imported energy", readme)
-        self.assertNotIn("Total grid exported energy", readme)
-        self.assertIn("not Energy Dashboard recommended", readme)
+        self.assertIn("| Grid consumption | Total grid imported energy |", readme)
+        self.assertIn("| Return to grid | Total grid exported energy |", readme)
+        self.assertIn("Do not use daily-resetting entities", readme)
+        self.assertIn("- Grid energy imported today", readme)
+        self.assertIn("- Grid energy exported today", readme)
 
-    def test_old_lifetime_grid_names_are_not_created(self) -> None:
+    def test_experimental_lifetime_grid_names_are_not_created(self) -> None:
         combined = (
             (ROOT / "custom_components" / "istore_solar" / "const.py").read_text()
             + SENSOR_PY.read_text()
             + STRINGS_JSON.read_text()
         )
-        self.assertNotIn('"total_grid_imported_energy"', combined)
-        self.assertNotIn('"total_grid_exported_energy"', combined)
+        self.assertNotIn('"experimental_total_grid_imported_energy"', combined)
+        self.assertNotIn('"experimental_total_grid_exported_energy"', combined)
+
+    def test_experimental_grid_unique_ids_migrate_to_stable_keys(self) -> None:
+        text = INIT_PY.read_text()
+        self.assertIn(
+            '"experimental_total_grid_imported_energy": "total_grid_imported_energy"',
+            text,
+        )
+        self.assertIn(
+            '"experimental_total_grid_exported_energy": "total_grid_exported_energy"',
+            text,
+        )
+        self.assertIn("new_unique_id", text)
+        self.assertIn("new_entity_id", text)
+        self.assertIn("version=3", text)
+        self.assertIn("VERSION = 3", CONFIG_FLOW_PY.read_text())
 
     def test_daily_grid_fields_map_from_meter_points(self) -> None:
         text = API_PY.read_text()
@@ -132,6 +148,30 @@ class TestStaticConfig(unittest.TestCase):
             text.index("SENSOR_GRID_ENERGY_EXPORTED_TODAY")
         ]
         self.assertNotIn("_cumulative_value", imported_section)
+
+    def test_lifetime_grid_fields_map_from_meter_kwh_points(self) -> None:
+        text = API_PY.read_text()
+        self.assertIn('"METER.APConsumedKWH"', text)
+        self.assertIn("SENSOR_TOTAL_GRID_IMPORTED_ENERGY", text)
+        self.assertIn('"METER.APProductionKWH"', text)
+        self.assertIn("SENSOR_TOTAL_GRID_EXPORTED_ENERGY", text)
+
+    def test_model_id_is_not_exposed_as_hardware_version(self) -> None:
+        text = API_PY.read_text()
+        self.assertNotIn('hw_version=_string_value(attrs.get("modelId"))', text)
+        self.assertIn('model = _string_value(attrs.get("modelName"))', text)
+        self.assertIn("serial_number=_serial_number_from_attrs(attrs)", text)
+
+    def test_status_sensors_remain_raw_diagnostics(self) -> None:
+        text = SENSOR_PY.read_text()
+        self.assertNotIn("SensorDeviceClass.ENUM", text)
+        self.assertIn("SENSOR_SITE_STATUS", text)
+        self.assertIn("SENSOR_INVERTER_STATUS", text)
+        self.assertIn("SENSOR_BATTERY_STATUS", text)
+        self.assertGreaterEqual(
+            text.count("entity_category=EntityCategory.DIAGNOSTIC"),
+            3,
+        )
 
 
 if __name__ == "__main__":

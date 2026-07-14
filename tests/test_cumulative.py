@@ -108,16 +108,14 @@ class TestCumulativeHelpers(unittest.TestCase):
             observations,
             previous,
             decreased,
-            "experimental_total_grid_imported_energy",
+            "total_grid_imported_energy",
             None,
         )
 
         self.assertIsNone(value)
-        self.assertTrue(
-            observations["experimental_total_grid_imported_energy"].missing
-        )
+        self.assertTrue(observations["total_grid_imported_energy"].missing)
         self.assertEqual(
-            observations["experimental_total_grid_imported_energy"].value_type,
+            observations["total_grid_imported_energy"].value_type,
             "missing",
         )
 
@@ -130,19 +128,15 @@ class TestCumulativeHelpers(unittest.TestCase):
             observations,
             previous,
             decreased,
-            "experimental_total_grid_exported_energy",
+            "total_grid_exported_energy",
             "unavailable",
         )
 
         self.assertIsNone(value)
-        self.assertTrue(
-            observations["experimental_total_grid_exported_energy"].detected
-        )
-        self.assertTrue(
-            observations["experimental_total_grid_exported_energy"].malformed
-        )
+        self.assertTrue(observations["total_grid_exported_energy"].detected)
+        self.assertTrue(observations["total_grid_exported_energy"].malformed)
         self.assertEqual(
-            observations["experimental_total_grid_exported_energy"].value_type,
+            observations["total_grid_exported_energy"].value_type,
             "str",
         )
 
@@ -155,23 +149,21 @@ class TestCumulativeHelpers(unittest.TestCase):
             observations,
             previous,
             decreased,
-            "experimental_total_grid_imported_energy",
+            "total_grid_imported_energy",
             100,
         )
         second = cumulative.observe_cumulative_value(
             observations,
             previous,
             decreased,
-            "experimental_total_grid_imported_energy",
+            "total_grid_imported_energy",
             99,
         )
 
         self.assertEqual(first, 100)
         self.assertEqual(second, 99)
-        self.assertIn("experimental_total_grid_imported_energy", decreased)
-        self.assertTrue(
-            observations["experimental_total_grid_imported_energy"].decreased
-        )
+        self.assertIn("total_grid_imported_energy", decreased)
+        self.assertTrue(observations["total_grid_imported_energy"].decreased)
 
     def test_all_cumulative_entity_keys_normalize_valid_values(self) -> None:
         observations = {}
@@ -180,8 +172,8 @@ class TestCumulativeHelpers(unittest.TestCase):
 
         for sensor_key, raw_value in (
             ("total_solar_production", "8116.73"),
-            ("experimental_total_grid_imported_energy", "12345"),
-            ("experimental_total_grid_exported_energy", 0),
+            ("total_grid_imported_energy", "12345"),
+            ("total_grid_exported_energy", 0),
             ("total_battery_charged_energy", 1234.5),
             ("total_battery_discharged_energy", "987.6"),
         ):

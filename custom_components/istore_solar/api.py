@@ -26,8 +26,6 @@ from .const import (
     SENSOR_BATTERY_POWER,
     SENSOR_BATTERY_SOC,
     SENSOR_BATTERY_STATUS,
-    SENSOR_EXPERIMENTAL_TOTAL_GRID_EXPORTED_ENERGY,
-    SENSOR_EXPERIMENTAL_TOTAL_GRID_IMPORTED_ENERGY,
     SENSOR_GRID_ENERGY_EXPORTED_TODAY,
     SENSOR_GRID_ENERGY_IMPORTED_TODAY,
     SENSOR_GRID_EXPORT_POWER,
@@ -39,6 +37,8 @@ from .const import (
     SENSOR_SOLAR_POWER,
     SENSOR_TOTAL_BATTERY_CHARGED_ENERGY,
     SENSOR_TOTAL_BATTERY_DISCHARGED_ENERGY,
+    SENSOR_TOTAL_GRID_EXPORTED_ENERGY,
+    SENSOR_TOTAL_GRID_IMPORTED_ENERGY,
     SENSOR_TOTAL_SOLAR_PRODUCTION,
 )
 from .cumulative import (
@@ -895,28 +895,28 @@ class IStoreSolarApiClient:
             grid_export_value
         )
 
-        experimental_grid_import_value = self._cumulative_value_from_point(
+        grid_total_import_value = self._cumulative_value_from_point(
             cumulative_observations,
             "METER.APConsumedKWH",
             meter_total_energy,
-            SENSOR_EXPERIMENTAL_TOTAL_GRID_IMPORTED_ENERGY,
+            SENSOR_TOTAL_GRID_IMPORTED_ENERGY,
         )
-        if experimental_grid_import_value is not None:
+        if grid_total_import_value is not None:
             meter_has_valid_energy = True
-        values[SENSOR_EXPERIMENTAL_TOTAL_GRID_IMPORTED_ENERGY] = (
-            IStoreSolarSensorValue(experimental_grid_import_value)
+        values[SENSOR_TOTAL_GRID_IMPORTED_ENERGY] = IStoreSolarSensorValue(
+            grid_total_import_value
         )
 
-        experimental_grid_export_value = self._cumulative_value_from_point(
+        grid_total_export_value = self._cumulative_value_from_point(
             cumulative_observations,
             "METER.APProductionKWH",
             meter_total_energy,
-            SENSOR_EXPERIMENTAL_TOTAL_GRID_EXPORTED_ENERGY,
+            SENSOR_TOTAL_GRID_EXPORTED_ENERGY,
         )
-        if experimental_grid_export_value is not None:
+        if grid_total_export_value is not None:
             meter_has_valid_energy = True
-        values[SENSOR_EXPERIMENTAL_TOTAL_GRID_EXPORTED_ENERGY] = (
-            IStoreSolarSensorValue(experimental_grid_export_value)
+        values[SENSOR_TOTAL_GRID_EXPORTED_ENERGY] = IStoreSolarSensorValue(
+            grid_total_export_value
         )
 
         if not meter_has_valid_energy:
@@ -1268,7 +1268,6 @@ def _devices_from_assets(
             serial_number=_serial_number_from_attrs(attrs),
             sw_version=_string_value(attrs.get("version"))
             or _string_value(attrs.get("rack1Version")),
-            hw_version=_string_value(attrs.get("modelId")),
         )
 
     return devices

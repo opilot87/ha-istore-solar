@@ -23,9 +23,11 @@ PLATFORMS: list[Platform] = [Platform.SENSOR]
 
 IStoreSolarConfigEntry = ConfigEntry[IStoreSolarDataUpdateCoordinator]
 
-OLD_GRID_UNIQUE_ID_SUFFIXES = {
+GRID_UNIQUE_ID_SUFFIX_MIGRATIONS = {
     "total_grid_imported_energy": "grid_energy_imported_today",
     "total_grid_exported_energy": "grid_energy_exported_today",
+    "experimental_total_grid_imported_energy": "total_grid_imported_energy",
+    "experimental_total_grid_exported_energy": "total_grid_exported_energy",
 }
 
 
@@ -70,7 +72,7 @@ async def async_migrate_entry(
         entity_registry,
         entry.entry_id,
     ):
-        for old_suffix, new_suffix in OLD_GRID_UNIQUE_ID_SUFFIXES.items():
+        for old_suffix, new_suffix in GRID_UNIQUE_ID_SUFFIX_MIGRATIONS.items():
             if registry_entry.unique_id.endswith(f"_{old_suffix}"):
                 new_unique_id = (
                     registry_entry.unique_id[: -len(old_suffix)] + new_suffix
@@ -89,8 +91,8 @@ async def async_migrate_entry(
                 )
                 break
 
-    if entry.version < 2:
-        hass.config_entries.async_update_entry(entry, version=2)
+    if entry.version < 3:
+        hass.config_entries.async_update_entry(entry, version=3)
     return True
 
 

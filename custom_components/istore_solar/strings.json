@@ -100,11 +100,11 @@
       "grid_energy_exported_today": {
         "name": "Grid energy exported today"
       },
-      "experimental_total_grid_imported_energy": {
-        "name": "Experimental total grid imported energy"
+      "total_grid_imported_energy": {
+        "name": "Total grid imported energy"
       },
-      "experimental_total_grid_exported_energy": {
-        "name": "Experimental total grid exported energy"
+      "total_grid_exported_energy": {
+        "name": "Total grid exported energy"
       },
       "total_battery_charged_energy": {
         "name": "Total battery charged energy"

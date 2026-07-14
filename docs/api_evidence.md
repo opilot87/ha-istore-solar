@@ -1346,11 +1346,8 @@ than the portal's observed 30-second cadence. A longer interval such as 60 to
 
 ## Candidate Home Assistant Entities
 
-Energy Dashboard suitability is marked "confirmed" only when the captures prove
-a monotonically increasing cumulative value. The new capture provides stronger
-lifetime/cumulative candidates, but still does not prove long-term monotonic
-behavior. For version 0.1.0, expose lifetime energy candidates disabled by
-default or mark them provisional until validated.
+Energy Dashboard suitability is marked "confirmed" only when live validation
+has distinguished a lifetime counter from daily or interval values.
 
 ### Instantaneous Power In kW
 
@@ -1359,8 +1356,8 @@ default or mark them provisional until validated.
 | Solar power | `PUB_SITE.PVOutputPower` | `power`, `kW`, measurement | Good live sensor |
 | Site/inverter power | `SITE.GenActivePW` or `INV.GenActivePW` | `power`, `kW`, measurement | Good live sensor; choose one canonical source |
 | Household/load power | `ConsPower` | `power`, `kW`, measurement | Good live sensor |
-| Grid power | `PUB_SITE.METERActivePW` or `METER.ActivePW` | `power`, `kW`, measurement | Negative confirmed as export; positive import still needs capture |
-| Battery power | `PUB_SITE.BSActivePW` or `BS.ActivePW` | `power`, `kW`, measurement | Zero confirmed as idle; charge/discharge sign still needs capture |
+| Grid power | `PUB_SITE.METERActivePW` or `METER.ActivePW` | `power`, `kW`, measurement | Positive import, negative export |
+| Battery power | `PUB_SITE.BSActivePW` or `BS.ActivePW` | `power`, `kW`, measurement | Positive charging, negative discharging |
 | Battery charge power | `ChargePower` | `power`, `kW`, measurement | Dashboard/chart field; non-negative charge candidate |
 | Battery discharge power | `DischargePower` | `power`, `kW`, measurement | Dashboard/chart field; non-positive discharge candidate |
 
@@ -1370,6 +1367,8 @@ default or mark them provisional until validated.
 | --- | --- | --- | --- |
 | Battery charge today | `BS.ChargingEngDay` | `energy`, `kWh` | Not confirmed; daily reset |
 | Battery discharge today | `BS.DischargingEngDay` | `energy`, `kWh` | Not confirmed; daily reset |
+| Grid import today | `METER.APConsumed` | `energy`, `kWh`, total | Daily reset; not an Energy Dashboard lifetime source |
+| Grid export today | `METER.APProduction` | `energy`, `kWh`, total | Daily reset; not an Energy Dashboard lifetime source |
 | Solar production today | `ActiveProduction:TD` | `energy`, `kWh` | Not confirmed; daily reset |
 | Solar production today | `TotalActiveProduction:TD` | `energy`, `kWh` | Not confirmed; daily reset |
 | Storage charge today | `StorageChargeProduction:TD` | `energy`, `kWh` | Not confirmed; daily reset |
@@ -1384,14 +1383,14 @@ statistics behavior are deliberately implemented and tested.
 
 | Candidate entity | Source field | HA class | Energy Dashboard |
 | --- | --- | --- | --- |
-| Lifetime solar production | `ActiveProduction:BOL` | `energy`, `kWh`, total_increasing candidate | Not confirmed; needs monotonic evidence |
-| Lifetime solar production | `TotalActiveProduction:BOL` | `energy`, `kWh`, total_increasing candidate | Stronger metadata candidate; still needs monotonic evidence |
-| Lifetime battery charge | `BS.TotalChargingEng` | `energy`, `kWh`, total_increasing candidate | History endpoint candidate; still needs monotonic evidence |
-| Lifetime battery discharge | `BS.TotalDischargingEng` | `energy`, `kWh`, total_increasing candidate | History endpoint candidate; still needs monotonic evidence |
+| Lifetime solar production | `ActiveProduction:BOL` | `energy`, `kWh`, total_increasing | Fallback source |
+| Lifetime solar production | `TotalActiveProduction:BOL` | `energy`, `kWh`, total_increasing | Preferred source |
+| Lifetime grid import | `METER.APConsumedKWH` | `energy`, `kWh`, total_increasing | Confirmed lifetime counter |
+| Lifetime grid export | `METER.APProductionKWH` | `energy`, `kWh`, total_increasing | Confirmed lifetime counter |
+| Lifetime battery charge | `BS.TotalChargingEng` | `energy`, `kWh`, total_increasing | Confirmed private-test source |
+| Lifetime battery discharge | `BS.TotalDischargingEng` | `energy`, `kWh`, total_increasing | Confirmed private-test source |
 | Lifetime storage charge | `StorageChargeProduction:BOL` or `BESSChargeEnergy:BOL` | `energy`, `kWh`, total_increasing candidate | Metadata candidate; still needs fetch/monotonic evidence |
 | Lifetime storage discharge | `StorageDischargeProduction:BOL` or `BESSDischargeEnergy:BOL` | `energy`, `kWh`, total_increasing candidate | Metadata candidate; still needs fetch/monotonic evidence |
-| Grid import energy | `METER.APConsumed` | `energy`, `kWh`, total_increasing candidate | Not confirmed; needs monotonic evidence |
-| Grid export energy | `METER.APProduction` | `energy`, `kWh`, total_increasing candidate | Not confirmed; needs monotonic evidence |
 
 ### Percentages
 
@@ -1447,18 +1446,12 @@ Remaining evidence gaps before a polished Energy Dashboard integration:
 2. Whether login failure returns a useful JSON body, code, message, or HTTP
    status for invalid credentials.
 3. The application-level response for expired or unauthenticated sessions.
-4. Monotonic evidence across multiple polling intervals, days, or restarts for
-   lifetime/cumulative kWh fields:
-   `TotalActiveProduction:BOL`, `BS.TotalChargingEng`,
-   `BS.TotalDischargingEng`, `METER.APConsumed`, `METER.APProduction`, and the
+4. Monotonic evidence across longer periods and restarts for non-shipped
    storage `BOL` metric candidates.
-5. Sign convention evidence for:
-   - grid import on `PUB_SITE.METERActivePW` / `METER.ActivePW`
-   - battery charge and discharge on `PUB_SITE.BSActivePW` / `BS.ActivePW`
-6. Whether multiple sites under one account are represented and how site
+5. Whether multiple sites under one account are represented and how site
    selection should work in the config flow.
-7. Rate limits, lockout behavior, and safe polling cadence.
-8. Whether the `datasource/v2/data/query` endpoint is required for any values
+6. Rate limits, lockout behavior, and safe polling cadence.
+7. Whether the `datasource/v2/data/query` endpoint is required for any values
    that cannot be fetched through simpler monitor endpoints.
 
 Evidence now sufficient for a first read-only integration:
@@ -1467,9 +1460,9 @@ Evidence now sufficient for a first read-only integration:
   `_sid_` creation remains the riskiest unknown.
 - Discovery, metadata, live polling, and direct chart/history endpoints are now
   sufficiently mapped for an experimental read-only implementation.
-- Version 0.1.0 should prioritize live power, battery percentage, and diagnostic
-  sensors. Energy Dashboard entities should remain provisional until monotonic
-  cumulative evidence is captured and validated.
+- Live power, battery percentage, diagnostic sensors, and validated lifetime
+  Energy Dashboard entities are sufficiently mapped for the current read-only
+  integration.
 
 Recommended minimum additional browser capture:
 
