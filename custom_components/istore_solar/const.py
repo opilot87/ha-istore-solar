@@ -37,6 +37,12 @@ SENSOR_BATTERY_DISCHARGED_TODAY = "battery_energy_discharged_today"
 SENSOR_TOTAL_SOLAR_PRODUCTION = "total_solar_production"
 SENSOR_GRID_ENERGY_IMPORTED_TODAY = "grid_energy_imported_today"
 SENSOR_GRID_ENERGY_EXPORTED_TODAY = "grid_energy_exported_today"
+SENSOR_EXPERIMENTAL_TOTAL_GRID_IMPORTED_ENERGY = (
+    "experimental_total_grid_imported_energy"
+)
+SENSOR_EXPERIMENTAL_TOTAL_GRID_EXPORTED_ENERGY = (
+    "experimental_total_grid_exported_energy"
+)
 SENSOR_TOTAL_BATTERY_CHARGED_ENERGY = "total_battery_charged_energy"
 SENSOR_TOTAL_BATTERY_DISCHARGED_ENERGY = "total_battery_discharged_energy"
 SENSOR_SITE_STATUS = "site_status"

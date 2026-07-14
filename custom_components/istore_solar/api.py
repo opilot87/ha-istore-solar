@@ -26,6 +26,8 @@ from .const import (
     SENSOR_BATTERY_POWER,
     SENSOR_BATTERY_SOC,
     SENSOR_BATTERY_STATUS,
+    SENSOR_EXPERIMENTAL_TOTAL_GRID_EXPORTED_ENERGY,
+    SENSOR_EXPERIMENTAL_TOTAL_GRID_IMPORTED_ENERGY,
     SENSOR_GRID_ENERGY_EXPORTED_TODAY,
     SENSOR_GRID_ENERGY_IMPORTED_TODAY,
     SENSOR_GRID_EXPORT_POWER,
@@ -60,6 +62,9 @@ JSON_UNSET: Final = object()
 ASSET_TREE_SITE_TYPE: Final = "Hossain-site"
 BATTERY_TOTAL_MEASUREMENT_POINTS: Final = (
     "BS.TotalChargingEng,BS.TotalDischargingEng"
+)
+METER_TOTAL_MEASUREMENT_POINTS: Final = (
+    "METER.APConsumedKWH,METER.APProductionKWH"
 )
 TEMPORARY_HTTP_STATUSES: Final = {429, 502, 503, 504}
 MAX_TEMPORARY_REQUEST_ATTEMPTS: Final = 2
@@ -377,11 +382,49 @@ class IStoreSolarApiClient:
                 return item
         return {}
 
+    async def async_get_meter_total_energy(
+        self,
+        site_id: str,
+    ) -> dict[str, dict[str, Any]]:
+        """Return optional experimental meter total energy candidate points."""
+        response = await self._request(
+            "POST",
+            "/hossain-bff/monitor/v1.0/asset/list",
+            json_data={
+                "pageSize": 50,
+                "pageNo": 1,
+                "mdmIds": site_id,
+                "mdmTypes": "Res_Meter",
+                "measurementPoints": METER_TOTAL_MEASUREMENT_POINTS,
+            },
+            operation="optional meter cumulative retrieval",
+        )
+        data = response.payload.get("data")
+        if not isinstance(data, list):
+            err = IStoreSolarMalformedResponseError(
+                "meter cumulative response missing data",
+                path=response.path,
+                status=response.status,
+                content_type=response.content_type,
+                response_preview=response.response_preview,
+                operation="optional meter cumulative retrieval",
+            )
+            _raise_logged_api_exception(err)
+
+        for item in data:
+            if not isinstance(item, dict) or _asset_type(item) != "Res_Meter":
+                continue
+            measurement_points = _dict_value(item, "measurementPoints")
+            if measurement_points:
+                return measurement_points
+        return {}
+
     async def async_get_live_telemetry(self) -> IStoreSolarTelemetry:
         """Return normalized live telemetry for the first discovered site."""
         discovered_site = await self._async_discover_site()
         site_id = discovered_site.site_id
         battery_total_energy: dict[str, Any] = {}
+        meter_total_energy: dict[str, dict[str, Any]] = {}
 
         try:
             overview_detail = await self.async_get_asset_detail(
@@ -420,6 +463,20 @@ class IStoreSolarApiClient:
                     err.status if err.status is not None else "unknown",
                     type(err).__name__,
                 )
+        meter_asset = _first_asset_by_type(discovered_site.assets, "Res_Meter")
+        if _asset_identifier(meter_asset) is not None:
+            try:
+                meter_total_energy = await self.async_get_meter_total_energy(site_id)
+            except IStoreSolarError as err:
+                LOGGER.warning(
+                    (
+                        "iStore Solar optional meter cumulative request failed: "
+                        "path=%s status=%s exception_type=%s"
+                    ),
+                    err.path or "unknown",
+                    err.status if err.status is not None else "unknown",
+                    type(err).__name__,
+                )
 
         return self._normalize_telemetry(
             site_id,
@@ -427,6 +484,7 @@ class IStoreSolarApiClient:
             site_live_detail,
             discovered_site.assets,
             battery_total_energy,
+            meter_total_energy,
         )
 
     async def async_get_data(self) -> IStoreSolarTelemetry:
@@ -709,9 +767,11 @@ class IStoreSolarApiClient:
         site_live_detail: dict[str, Any],
         assets: list[dict[str, Any]],
         battery_total_energy: dict[str, Any] | None = None,
+        meter_total_energy: dict[str, dict[str, Any]] | None = None,
     ) -> IStoreSolarTelemetry:
         """Normalize API responses into Home Assistant entity data."""
         battery_total_energy = battery_total_energy or {}
+        meter_total_energy = meter_total_energy or {}
         overview_item = _detail_item(overview_detail, site_id)
         site_live_item = _detail_item(site_live_detail, site_id)
 
@@ -812,14 +872,14 @@ class IStoreSolarApiClient:
                 ("TotalActiveProduction:BOL", "ActiveProduction:BOL"),
             )
 
-        meter_has_valid_daily_energy = False
+        meter_has_valid_energy = False
         grid_import_value = _daily_energy_value_from_point(
             "METER.APConsumed",
             meter_points,
             SENSOR_GRID_ENERGY_IMPORTED_TODAY,
         )
         if grid_import_value is not None:
-            meter_has_valid_daily_energy = True
+            meter_has_valid_energy = True
         values[SENSOR_GRID_ENERGY_IMPORTED_TODAY] = IStoreSolarSensorValue(
             grid_import_value
         )
@@ -830,12 +890,36 @@ class IStoreSolarApiClient:
             SENSOR_GRID_ENERGY_EXPORTED_TODAY,
         )
         if grid_export_value is not None:
-            meter_has_valid_daily_energy = True
+            meter_has_valid_energy = True
         values[SENSOR_GRID_ENERGY_EXPORTED_TODAY] = IStoreSolarSensorValue(
             grid_export_value
         )
 
-        if not meter_has_valid_daily_energy:
+        experimental_grid_import_value = self._cumulative_value_from_point(
+            cumulative_observations,
+            "METER.APConsumedKWH",
+            meter_total_energy,
+            SENSOR_EXPERIMENTAL_TOTAL_GRID_IMPORTED_ENERGY,
+        )
+        if experimental_grid_import_value is not None:
+            meter_has_valid_energy = True
+        values[SENSOR_EXPERIMENTAL_TOTAL_GRID_IMPORTED_ENERGY] = (
+            IStoreSolarSensorValue(experimental_grid_import_value)
+        )
+
+        experimental_grid_export_value = self._cumulative_value_from_point(
+            cumulative_observations,
+            "METER.APProductionKWH",
+            meter_total_energy,
+            SENSOR_EXPERIMENTAL_TOTAL_GRID_EXPORTED_ENERGY,
+        )
+        if experimental_grid_export_value is not None:
+            meter_has_valid_energy = True
+        values[SENSOR_EXPERIMENTAL_TOTAL_GRID_EXPORTED_ENERGY] = (
+            IStoreSolarSensorValue(experimental_grid_export_value)
+        )
+
+        if not meter_has_valid_energy:
             devices.pop("meter", None)
 
         values[SENSOR_TOTAL_BATTERY_CHARGED_ENERGY] = IStoreSolarSensorValue(
@@ -923,9 +1007,10 @@ class IStoreSolarApiClient:
         observation = observations[sensor_key]
         if observation.missing:
             LOGGER.debug(
-                "iStore Solar cumulative field missing: field=%s sensor=%s",
+                "iStore Solar cumulative field missing: field=%s sensor=%s type=%s",
                 source_field,
                 sensor_key,
+                observation.value_type,
             )
             return None
         if observation.malformed:
@@ -938,9 +1023,10 @@ class IStoreSolarApiClient:
             return None
         if observation.decreased:
             LOGGER.warning(
-                "iStore Solar cumulative counter decreased: field=%s sensor=%s",
+                "iStore Solar cumulative counter decreased: field=%s sensor=%s type=%s",
                 source_field,
                 sensor_key,
+                observation.value_type,
             )
         LOGGER.debug(
             "iStore Solar cumulative field detected: field=%s sensor=%s type=%s",

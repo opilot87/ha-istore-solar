@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.2
+
+- Added disabled-by-default experimental meter lifetime candidates sourced from
+  `METER.APConsumedKWH` and `METER.APProductionKWH`.
+- Added optional `Res_Meter` measurement-point retrieval using the confirmed
+  `asset/list` request shape.
+- Kept daily grid energy sensors unchanged and continued excluding grid meter
+  candidates from the documented Energy Dashboard setup.
+- Reused sanitized cumulative diagnostics for detected, missing, malformed, and
+  decreased candidate fields without logging raw values or device identifiers.
+
 ## 0.3.1
 
 - Corrected `METER.APConsumed` and `METER.APProduction` from experimental

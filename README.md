@@ -5,10 +5,11 @@ cloud portal at `home.istore.net.au`.
 
 ## Status
 
-Version 0.3.1 is a private experimental read-only build. It uses a manually
+Version 0.3.2 is a private experimental read-only build. It uses a manually
 copied bearer token from the iStore web portal and exposes provisional
 cumulative solar and battery energy sensors for Home Assistant Energy Dashboard
-validation.
+validation. It also includes disabled-by-default experimental meter lifetime
+counter candidates for private investigation.
 
 Automatic username/password login, automatic token refresh, and public-release
 Energy Dashboard validation are not complete. Do not use this integration for
@@ -49,6 +50,8 @@ automation, billing, grid settlement, safety, or any other critical purpose.
 - Grid energy imported today, in kWh
 - Grid energy exported today, in kWh
 - Total solar production, in kWh, experimental
+- Experimental total grid imported energy, in kWh, disabled by default
+- Experimental total grid exported energy, in kWh, disabled by default
 - Total battery charged energy, in kWh, experimental
 - Total battery discharged energy, in kWh, experimental
 - Site, inverter, and battery status code diagnostics
@@ -75,7 +78,8 @@ the API evidence does not yet include a confirmed enum mapping.
 
 ## Experimental Energy Dashboard
 
-Version 0.3.1 exposes three cumulative entities for private validation:
+Version 0.3.2 exposes three cumulative entities for private Energy Dashboard
+validation:
 
 | Energy Dashboard slot | Entity |
 | --- | --- |
@@ -105,6 +109,19 @@ Do not use `Grid energy imported today` or `Grid energy exported today` in the
 Energy Dashboard. Live values from `METER.APConsumed` and `METER.APProduction`
 currently resemble current-day import/export totals, not lifetime counters.
 Genuine lifetime grid import/export counters have not been confirmed yet.
+
+Version 0.3.2 adds disabled-by-default meter lifetime candidates for private
+investigation only:
+
+| Entity | Source field | Status |
+| --- | --- | --- |
+| Experimental total grid imported energy | `METER.APConsumedKWH` | Disabled by default, not Energy Dashboard recommended |
+| Experimental total grid exported energy | `METER.APProductionKWH` | Disabled by default, not Energy Dashboard recommended |
+
+The candidate request uses the confirmed `asset/list` measurement-point request
+shape for `Res_Meter`. Runtime diagnostics record whether the candidate fields
+are detected, missing, malformed, or decreased, plus sanitized value types. They
+do not log raw counter values or meter identifiers.
 
 ## Manual Installation
 

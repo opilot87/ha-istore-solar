@@ -22,6 +22,8 @@ class TestStaticConfig(unittest.TestCase):
             "total_solar_production",
             "grid_energy_imported_today",
             "grid_energy_exported_today",
+            "experimental_total_grid_imported_energy",
+            "experimental_total_grid_exported_energy",
             "total_battery_charged_energy",
             "total_battery_discharged_energy",
         ):
@@ -31,15 +33,42 @@ class TestStaticConfig(unittest.TestCase):
 
     def test_cumulative_sensors_are_energy_total_increasing_kwh(self) -> None:
         text = SENSOR_PY.read_text()
-        self.assertEqual(text.count("state_class=SensorStateClass.TOTAL_INCREASING"), 3)
+        self.assertEqual(text.count("state_class=SensorStateClass.TOTAL_INCREASING"), 5)
         self.assertGreaterEqual(
             text.count("device_class=SensorDeviceClass.ENERGY"),
-            7,
+            9,
         )
         self.assertGreaterEqual(
             text.count("native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR"),
-            7,
+            9,
         )
+
+    def test_experimental_meter_total_entities_are_disabled_by_default(self) -> None:
+        text = SENSOR_PY.read_text()
+        description_start = text.index("SENSOR_DESCRIPTIONS")
+        imported_section = text[
+            text.index(
+                "SENSOR_EXPERIMENTAL_TOTAL_GRID_IMPORTED_ENERGY",
+                description_start,
+            ):
+            text.index(
+                "SENSOR_EXPERIMENTAL_TOTAL_GRID_EXPORTED_ENERGY",
+                description_start,
+            )
+        ]
+        exported_section = text[
+            text.index(
+                "SENSOR_EXPERIMENTAL_TOTAL_GRID_EXPORTED_ENERGY",
+                description_start,
+            ):
+            text.index("SENSOR_TOTAL_BATTERY_CHARGED_ENERGY", description_start)
+        ]
+        self.assertIn("device_key=\"meter\"", imported_section)
+        self.assertIn("entity_registry_enabled_default=False", imported_section)
+        self.assertIn("SensorStateClass.TOTAL_INCREASING", imported_section)
+        self.assertIn("device_key=\"meter\"", exported_section)
+        self.assertIn("entity_registry_enabled_default=False", exported_section)
+        self.assertIn("SensorStateClass.TOTAL_INCREASING", exported_section)
 
     def test_battery_total_request_uses_confirmed_shape(self) -> None:
         text = API_PY.read_text()
@@ -49,12 +78,23 @@ class TestStaticConfig(unittest.TestCase):
         self.assertIn('"measurementPoints": BATTERY_TOTAL_MEASUREMENT_POINTS', text)
         self.assertIn('"autoInterpolate": True', text)
 
+    def test_meter_total_request_uses_confirmed_asset_list_shape(self) -> None:
+        text = API_PY.read_text()
+        self.assertIn("/hossain-bff/monitor/v1.0/asset/list", text)
+        self.assertIn('"pageSize": 50', text)
+        self.assertIn('"pageNo": 1', text)
+        self.assertIn('"mdmTypes": "Res_Meter"', text)
+        self.assertIn('"measurementPoints": METER_TOTAL_MEASUREMENT_POINTS', text)
+        self.assertIn("METER.APConsumedKWH,METER.APProductionKWH", text)
+
     def test_cumulative_translations_exist(self) -> None:
         text = STRINGS_JSON.read_text()
         for name in (
             "Total solar production",
             "Grid energy imported today",
             "Grid energy exported today",
+            "Experimental total grid imported energy",
+            "Experimental total grid exported energy",
             "Total battery charged energy",
             "Total battery discharged energy",
         ):
@@ -67,6 +107,7 @@ class TestStaticConfig(unittest.TestCase):
         self.assertNotIn("| Return to grid | Total grid exported energy |", readme)
         self.assertNotIn("Total grid imported energy", readme)
         self.assertNotIn("Total grid exported energy", readme)
+        self.assertIn("not Energy Dashboard recommended", readme)
 
     def test_old_lifetime_grid_names_are_not_created(self) -> None:
         combined = (

@@ -99,6 +99,80 @@ class TestCumulativeHelpers(unittest.TestCase):
         self.assertIn("total_battery_charged_energy", decreased)
         self.assertTrue(observations["total_battery_charged_energy"].decreased)
 
+    def test_experimental_meter_candidate_absence(self) -> None:
+        observations = {}
+        previous = {}
+        decreased = set()
+
+        value = cumulative.observe_cumulative_value(
+            observations,
+            previous,
+            decreased,
+            "experimental_total_grid_imported_energy",
+            None,
+        )
+
+        self.assertIsNone(value)
+        self.assertTrue(
+            observations["experimental_total_grid_imported_energy"].missing
+        )
+        self.assertEqual(
+            observations["experimental_total_grid_imported_energy"].value_type,
+            "missing",
+        )
+
+    def test_experimental_meter_candidate_malformed_value(self) -> None:
+        observations = {}
+        previous = {}
+        decreased = set()
+
+        value = cumulative.observe_cumulative_value(
+            observations,
+            previous,
+            decreased,
+            "experimental_total_grid_exported_energy",
+            "unavailable",
+        )
+
+        self.assertIsNone(value)
+        self.assertTrue(
+            observations["experimental_total_grid_exported_energy"].detected
+        )
+        self.assertTrue(
+            observations["experimental_total_grid_exported_energy"].malformed
+        )
+        self.assertEqual(
+            observations["experimental_total_grid_exported_energy"].value_type,
+            "str",
+        )
+
+    def test_experimental_meter_candidate_decrease_is_observed(self) -> None:
+        observations = {}
+        previous = {}
+        decreased = set()
+
+        first = cumulative.observe_cumulative_value(
+            observations,
+            previous,
+            decreased,
+            "experimental_total_grid_imported_energy",
+            100,
+        )
+        second = cumulative.observe_cumulative_value(
+            observations,
+            previous,
+            decreased,
+            "experimental_total_grid_imported_energy",
+            99,
+        )
+
+        self.assertEqual(first, 100)
+        self.assertEqual(second, 99)
+        self.assertIn("experimental_total_grid_imported_energy", decreased)
+        self.assertTrue(
+            observations["experimental_total_grid_imported_energy"].decreased
+        )
+
     def test_all_cumulative_entity_keys_normalize_valid_values(self) -> None:
         observations = {}
         previous = {}
@@ -106,6 +180,8 @@ class TestCumulativeHelpers(unittest.TestCase):
 
         for sensor_key, raw_value in (
             ("total_solar_production", "8116.73"),
+            ("experimental_total_grid_imported_energy", "12345"),
+            ("experimental_total_grid_exported_energy", 0),
             ("total_battery_charged_energy", 1234.5),
             ("total_battery_discharged_energy", "987.6"),
         ):
