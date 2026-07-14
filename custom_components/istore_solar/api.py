@@ -36,6 +36,7 @@ LOGGER = logging.getLogger(__name__)
 MAX_RESPONSE_PREVIEW_LENGTH: Final = 240
 PERMISSION_DENIED_CODE: Final = 88203
 JSON_UNSET: Final = object()
+ASSET_TREE_SITE_TYPE: Final = "Hossain-site"
 
 SENSITIVE_KEYS: Final[tuple[str, ...]] = (
     "account",
@@ -153,6 +154,33 @@ class _DiscoveredSite:
 
     site_id: str
     assets: list[dict[str, Any]]
+
+
+@dataclass(slots=True, frozen=True)
+class _AssetTreeCandidate:
+    """Sanitized candidate node found in the asset tree."""
+
+    identifier: str
+    identifier_field: str
+    path: str
+    node: dict[str, Any]
+
+
+@dataclass(slots=True, frozen=True)
+class _AssetTreeDiagnostics:
+    """Sanitized asset-tree diagnostics."""
+
+    top_level_keys: tuple[str, ...]
+    root_node_count: int
+    recursive_node_count: int
+    type_values: tuple[str, ...]
+    resource_type_values: tuple[str, ...]
+    mdm_type_values: tuple[str, ...]
+    candidate_field_names: tuple[str, ...]
+    identifier_fields: tuple[str, ...]
+    identifier_lengths: tuple[int, ...]
+    has_children_arrays: bool
+    has_associated_resources_arrays: bool
 
 
 @dataclass(slots=True, frozen=True)
@@ -338,10 +366,23 @@ class IStoreSolarApiClient:
 
         await self.async_get_user_info()
         tree = await self._async_get_asset_tree()
-        site_id = _first_site_id_from_asset_tree(tree.payload)
-        if site_id is None:
+        tree_diagnostics = _asset_tree_diagnostics(tree.payload)
+        _log_asset_tree_diagnostics(tree, tree_diagnostics)
+
+        candidates = _site_candidates_from_asset_tree(tree.payload)
+        if not candidates:
+            observed_types = ", ".join(tree_diagnostics.type_values) or "none"
+            observed_resource_types = (
+                ", ".join(tree_diagnostics.resource_type_values) or "none"
+            )
+            observed_mdm_types = ", ".join(tree_diagnostics.mdm_type_values) or "none"
             err = IStoreSolarUnsupportedResponseError(
-                "could not discover a residential solar site from asset tree",
+                (
+                    "could not discover a residential solar site from asset tree; "
+                    f"observed type values: {observed_types}; "
+                    f"resourceType values: {observed_resource_types}; "
+                    f"mdmType values: {observed_mdm_types}"
+                ),
                 path=tree.path,
                 status=tree.status,
                 content_type=tree.content_type,
@@ -350,13 +391,26 @@ class IStoreSolarApiClient:
             )
             _raise_logged_api_exception(err)
 
+        if len(candidates) == 1:
+            LOGGER.debug(
+                (
+                    "iStore Solar selected asset-tree site candidate: "
+                    "reason=exactly_one_confirmed_candidate path=%s "
+                    "identifier_field=%s identifier_length=%d"
+                ),
+                candidates[0].path,
+                candidates[0].identifier_field,
+                len(candidates[0].identifier),
+            )
+
+        site_id = candidates[0].identifier
         _log_discovery_result(
             endpoint_name="asset/tree",
-            asset_type_requested="Res_Solar_Site",
+            asset_type_requested=ASSET_TREE_SITE_TYPE,
             identifier_source="asset-tree result",
             identifier=site_id,
             application_code=tree.application_code,
-            assets=_asset_tree_nodes(tree.payload),
+            assets=[candidate.node for candidate in candidates],
         )
         assets = await self.async_get_assets(site_id)
         self._discovered_site = _DiscoveredSite(site_id=site_id, assets=assets)
@@ -620,34 +674,145 @@ class IStoreSolarApiClient:
         return IStoreSolarTelemetry(site=site_device, devices=devices, values=values)
 
 
-def _first_site_id_from_asset_tree(payload: dict[str, Any]) -> str | None:
-    """Return the first residential solar site identifier from asset-tree data."""
-    for node in _asset_tree_nodes(payload):
-        if _asset_type(node) != "Res_Solar_Site":
+def _site_candidates_from_asset_tree(
+    payload: dict[str, Any],
+) -> list[_AssetTreeCandidate]:
+    """Return confirmed residential site candidates from asset-tree data."""
+    candidates: list[_AssetTreeCandidate] = []
+    for path, node in _asset_tree_nodes(payload):
+        if (
+            node.get("tag") != "asset"
+            or _string_value(node.get("type")) != ASSET_TREE_SITE_TYPE
+        ):
             continue
-        site_id = _string_value(node.get("mdmId")) or _string_value(
-            node.get("assetId")
-        )
-        if site_id is None:
-            site_id = _string_value(node.get("resourceId")) or _string_value(
-                node.get("id")
+        identifier = _asset_tree_identifier(node)
+        if identifier is None:
+            continue
+        identifier_field, identifier_value = identifier
+        candidates.append(
+            _AssetTreeCandidate(
+                identifier=identifier_value,
+                identifier_field=identifier_field,
+                path=path,
+                node=node,
             )
-        if site_id is not None:
-            return site_id
+        )
+    return candidates
+
+
+def _asset_tree_nodes(payload: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    """Return primary and associated asset-tree nodes with sanitized paths."""
+    data = payload.get("data")
+    root_nodes: list[tuple[str, dict[str, Any]]] = []
+    if isinstance(data, dict):
+        root_nodes.append(("data", data))
+    elif isinstance(data, list):
+        root_nodes.extend(
+            (f"data[{index}]", item)
+            for index, item in enumerate(data)
+            if isinstance(item, dict)
+        )
+    return _walk_asset_tree_nodes(root_nodes)
+
+
+def _walk_asset_tree_nodes(
+    pending: list[tuple[str, dict[str, Any]]],
+) -> list[tuple[str, dict[str, Any]]]:
+    """Walk confirmed asset-tree child containers."""
+    nodes: list[tuple[str, dict[str, Any]]] = []
+    stack = list(reversed(pending))
+    while stack:
+        path, node = stack.pop()
+        nodes.append((path, node))
+        for child_key in (
+            "children",
+            "associatedResources",
+            "associatedAssets",
+            "associatedAsset",
+            "assets",
+        ):
+            children = node.get(child_key)
+            if isinstance(children, list):
+                for index, child in reversed(list(enumerate(children))):
+                    if isinstance(child, dict):
+                        stack.append((f"{path}.{child_key}[{index}]", child))
+            elif isinstance(children, dict):
+                stack.append((f"{path}.{child_key}", children))
+    return nodes
+
+
+def _asset_tree_identifier(node: dict[str, Any]) -> tuple[str, str] | None:
+    """Return the confirmed site identifier field and value from a tree node."""
+    for field_name in ("id", "assetId", "mdmId", "resourceId", "uri", "nodeId"):
+        value = _string_value(node.get(field_name))
+        if value is not None:
+            return field_name, value
     return None
 
 
-def _asset_tree_nodes(value: Any) -> list[dict[str, Any]]:
-    """Return all object nodes from a nested asset-tree payload."""
-    nodes: list[dict[str, Any]] = []
-    if isinstance(value, dict):
-        nodes.append(value)
-        for item in value.values():
-            nodes.extend(_asset_tree_nodes(item))
-    elif isinstance(value, list):
-        for item in value:
-            nodes.extend(_asset_tree_nodes(item))
-    return nodes
+def _asset_tree_diagnostics(payload: dict[str, Any]) -> _AssetTreeDiagnostics:
+    """Build sanitized asset-tree diagnostics."""
+    nodes_with_paths = _asset_tree_nodes(payload)
+    nodes = [node for _, node in nodes_with_paths]
+    candidates = _site_candidates_from_asset_tree(payload)
+    candidate_nodes = [candidate.node for candidate in candidates]
+    identifier_pairs = [
+        identifier
+        for node in nodes
+        if (identifier := _asset_tree_identifier(node)) is not None
+    ]
+
+    return _AssetTreeDiagnostics(
+        top_level_keys=tuple(sorted(str(key) for key in payload)),
+        root_node_count=_asset_tree_root_node_count(payload),
+        recursive_node_count=len(nodes),
+        type_values=_distinct_string_values(nodes, "type"),
+        resource_type_values=_distinct_string_values(nodes, "resourceType"),
+        mdm_type_values=_distinct_string_values(nodes, "mdmType"),
+        candidate_field_names=tuple(
+            sorted({str(key) for node in candidate_nodes for key in node})
+        ),
+        identifier_fields=tuple(sorted({field for field, _ in identifier_pairs})),
+        identifier_lengths=tuple(
+            sorted({len(value) for _, value in identifier_pairs})
+        ),
+        has_children_arrays=any(
+            isinstance(node.get("children"), list) for node in nodes
+        ),
+        has_associated_resources_arrays=any(
+            isinstance(node.get(key), list)
+            for node in nodes
+            for key in (
+                "associatedResources",
+                "associatedAssets",
+                "associatedAsset",
+                "assets",
+            )
+        ),
+    )
+
+
+def _asset_tree_root_node_count(payload: dict[str, Any]) -> int:
+    """Return the number of root nodes in the asset-tree wrapper."""
+    data = payload.get("data")
+    if isinstance(data, dict):
+        return 1
+    if isinstance(data, list):
+        return sum(1 for item in data if isinstance(item, dict))
+    return 0
+
+
+def _distinct_string_values(
+    nodes: list[dict[str, Any]],
+    field_name: str,
+) -> tuple[str, ...]:
+    """Return sanitized distinct string values for a field."""
+    values = {
+        value
+        for node in nodes
+        if (value := _string_value(node.get(field_name))) is not None
+    }
+    return tuple(sorted(values))
 
 
 def _detail_item(detail: dict[str, Any], preferred_id: str) -> dict[str, Any]:
@@ -867,6 +1032,52 @@ def _log_discovery_result(
         len(assets),
         ",".join(asset_types) if asset_types else "none",
     )
+
+
+def _log_asset_tree_diagnostics(
+    response: _ResponseContext,
+    diagnostics: _AssetTreeDiagnostics,
+) -> None:
+    """Log sanitized asset-tree response diagnostics."""
+    message = response.payload.get("message")
+    if message is None:
+        message = response.payload.get("msg")
+    LOGGER.debug(
+        (
+            "iStore Solar asset-tree diagnostics: http_status=%s "
+            "application_code=%s application_message=%s top_level_keys=%s "
+            "root_node_count=%d recursive_node_count=%d type_values=%s "
+            "resource_type_values=%s mdm_type_values=%s "
+            "candidate_field_names=%s identifier_fields=%s "
+            "identifier_value_lengths=%s has_children_arrays=%s "
+            "has_associated_resources_arrays=%s"
+        ),
+        response.status,
+        (
+            response.application_code
+            if response.application_code is not None
+            else "unknown"
+        ),
+        _sanitize_application_message(message),
+        ",".join(diagnostics.top_level_keys) or "none",
+        diagnostics.root_node_count,
+        diagnostics.recursive_node_count,
+        ",".join(diagnostics.type_values) or "none",
+        ",".join(diagnostics.resource_type_values) or "none",
+        ",".join(diagnostics.mdm_type_values) or "none",
+        ",".join(diagnostics.candidate_field_names) or "none",
+        ",".join(diagnostics.identifier_fields) or "none",
+        ",".join(str(length) for length in diagnostics.identifier_lengths) or "none",
+        diagnostics.has_children_arrays,
+        diagnostics.has_associated_resources_arrays,
+    )
+
+
+def _sanitize_application_message(value: Any) -> str:
+    """Return a sanitized application message for diagnostics."""
+    if not isinstance(value, str) or not value.strip():
+        return "empty"
+    return _sanitize_text(value)
 
 
 def _raise_logged_api_exception(err: IStoreSolarError) -> NoReturn:
