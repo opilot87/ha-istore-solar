@@ -2,7 +2,7 @@
 
 <p align="center">
   <img
-    src="https://raw.githubusercontent.com/opilot87/ha-istore-solar/main/custom_components/istore_solar/brand/logo.png"
+    src="https://raw.githubusercontent.com/opilot87/ha-istore-solar/main/docs/images/istore-logo-blue.png"
     alt="iStore logo"
     width="400"
   >
