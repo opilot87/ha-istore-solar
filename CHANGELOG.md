@@ -2,21 +2,26 @@
 
 ## 0.6.0
 
-- Prepared the integration for public beta with README restructuring, HACS
-  readiness notes, security policy, contribution guide, and feature-request
-  template.
+- Prepared the integration for its first public beta with README restructuring,
+  HACS custom-repository guidance, release notes, security policy, contribution
+  guide, issue templates, local branding, and optional Buy Me a Coffee metadata.
+- Documented automatic account/password sign-in, the confirmed RSA-OAEP
+  SHA-256 password encryption flow, manual access-token fallback, and one-shot
+  automatic re-login when a stored final token expires.
 - Normalized Home Assistant display names for site, inverter, battery, and
   meter devices without changing stable unique IDs.
+- Documented supported devices, live power sensors, daily energy counters,
+  validated lifetime energy counters, and full Home Assistant Energy Dashboard
+  mapping for solar, grid import/export, and battery charge/discharge.
+- Added a Power Flow Card Plus example using the signed and derived power
+  sensors.
 - Renamed daily entity display labels for clearer Home Assistant naming while
-  preserving unique IDs.
-- Disabled raw status-code diagnostics by default.
+  preserving unique IDs, and disabled raw status-code diagnostics by default.
 - Added coordinator update duration tracking and richer sanitized diagnostics.
 - Retained the last valid optional cumulative telemetry when optional cumulative
   requests fail, while still allowing live telemetry to update.
-- Added local iStore brand assets for Home Assistant/HACS presentation, plus
-  optional Buy Me a Coffee funding metadata.
-- Kept automatic sign-in, manual access-token fallback, and one-shot relogin
-  behavior from v0.5.x.
+- Clarified privacy expectations, known limitations, and the current manual
+  bearer-token limitation for users who cannot use automatic sign-in.
 
 ## 0.5.1
 

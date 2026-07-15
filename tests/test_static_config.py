@@ -12,8 +12,14 @@ API_PY = ROOT / "custom_components" / "istore_solar" / "api.py"
 INIT_PY = ROOT / "custom_components" / "istore_solar" / "__init__.py"
 CONFIG_FLOW_PY = ROOT / "custom_components" / "istore_solar" / "config_flow.py"
 STRINGS_JSON = ROOT / "custom_components" / "istore_solar" / "strings.json"
+MANIFEST_JSON = ROOT / "custom_components" / "istore_solar" / "manifest.json"
+HACS_JSON = ROOT / "hacs.json"
 README_MD = ROOT / "README.md"
+CHANGELOG_MD = ROOT / "CHANGELOG.md"
 FUNDING_YML = ROOT / ".github" / "FUNDING.yml"
+BUG_TEMPLATE = ROOT / ".github" / "ISSUE_TEMPLATE" / "bug_report.md"
+VALIDATE_WORKFLOW = ROOT / ".github" / "workflows" / "validate.yml"
+RELEASE_NOTES = ROOT / "docs" / "release-notes-v0.6.0.md"
 
 
 class TestStaticConfig(unittest.TestCase):
@@ -228,6 +234,69 @@ class TestStaticConfig(unittest.TestCase):
         )
         self.assertIn("https://buymeacoffee.com/opilot87", readme)
         self.assertNotIn("buymeacoffee", (ROOT / "custom_components" / "istore_solar" / "strings.json").read_text().lower())
+
+    def test_public_beta_release_metadata(self) -> None:
+        manifest = MANIFEST_JSON.read_text()
+        hacs = HACS_JSON.read_text()
+        readme = README_MD.read_text()
+        changelog = CHANGELOG_MD.read_text()
+        self.assertIn('"version": "0.6.0"', manifest)
+        self.assertIn('"codeowners": ["@opilot87"]', manifest)
+        self.assertIn('"documentation": "https://github.com/opilot87/ha-istore-solar"', manifest)
+        self.assertIn('"issue_tracker": "https://github.com/opilot87/ha-istore-solar/issues"', manifest)
+        self.assertIn('"iot_class": "cloud_polling"', manifest)
+        self.assertIn('"integration_type": "hub"', manifest)
+        self.assertIn('"country": "AU"', hacs)
+        self.assertNotIn("content_in_root", hacs)
+        self.assertIn("https://github.com/opilot87/ha-istore-solar", readme)
+        self.assertIn("RSA-OAEP", changelog)
+        self.assertIn("Power Flow Card Plus", changelog)
+
+    def test_release_notes_have_required_sections(self) -> None:
+        text = RELEASE_NOTES.read_text()
+        for heading in (
+            "# iStore Solar v0.6.0 — Public Beta",
+            "## Highlights",
+            "## Supported data",
+            "## Authentication",
+            "## Installation",
+            "## Updating",
+            "## Known limitations",
+            "## Reporting issues",
+            "## Support development",
+        ):
+            self.assertIn(heading, text)
+        self.assertIn(
+            "This is an unofficial community integration and is not affiliated with,",
+            text,
+        )
+        self.assertNotIn("private/", text)
+
+    def test_bug_template_requests_public_beta_triage_fields(self) -> None:
+        text = BUG_TEMPLATE.read_text()
+        for expected in (
+            "Home Assistant version",
+            "iStore Solar integration version",
+            "Install method",
+            "Hardware model",
+            "Authentication mode",
+            "Reproduction Steps",
+            "sanitized Home Assistant diagnostics",
+            "password",
+            "tokens",
+            "HAR files",
+            "private captures",
+            "serial numbers",
+        ):
+            self.assertIn(expected, text)
+
+    def test_validation_workflow_is_declared(self) -> None:
+        text = VALIDATE_WORKFLOW.read_text()
+        self.assertIn("hacs/action@main", text)
+        self.assertIn("category: integration", text)
+        self.assertIn("home-assistant/actions/hassfest@master", text)
+        self.assertIn("actions/setup-python@v5", text)
+        self.assertIn("python -m unittest discover -s tests", text)
 
     def test_diagnostics_include_public_beta_fields(self) -> None:
         text = (ROOT / "custom_components" / "istore_solar" / "diagnostics.py").read_text()

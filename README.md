@@ -79,7 +79,7 @@ This repository can be installed as a HACS custom repository. It is not in the
 default HACS repository.
 
 1. In HACS, open Custom repositories.
-2. Add this repository URL.
+2. Add `https://github.com/opilot87/ha-istore-solar`.
 3. Select category Integration.
 4. Install iStore Solar.
 5. Restart Home Assistant.
