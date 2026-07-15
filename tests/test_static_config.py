@@ -131,8 +131,8 @@ class TestStaticConfig(unittest.TestCase):
         )
         self.assertIn("new_unique_id", text)
         self.assertIn("new_entity_id", text)
-        self.assertIn("version=3", text)
-        self.assertIn("VERSION = 3", CONFIG_FLOW_PY.read_text())
+        self.assertIn("version=4", text)
+        self.assertIn("VERSION = 4", CONFIG_FLOW_PY.read_text())
 
     def test_daily_grid_fields_map_from_meter_points(self) -> None:
         text = API_PY.read_text()

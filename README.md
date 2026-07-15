@@ -5,20 +5,21 @@ cloud portal at `home.istore.net.au`.
 
 ## Status
 
-Version 0.4.0 is a private experimental read-only build. It uses a manually
-copied bearer token from the iStore web portal and exposes validated lifetime
-solar, grid, and battery energy sensors for Home Assistant Energy Dashboard
-testing.
+Version 0.5.0 is a private experimental read-only build. It supports automatic
+account/password sign-in plus an advanced manual bearer-token fallback, and
+exposes validated lifetime solar, grid, and battery energy sensors for Home
+Assistant Energy Dashboard testing.
 
-Automatic username/password login, automatic token refresh, and public-release
-hardening are not complete. Do not use this integration for automation,
-billing, grid settlement, safety, or any other critical purpose.
+Automatic refresh-token use and public-release hardening are not complete. Do
+not use this integration for automation, billing, grid settlement, safety, or
+any other critical purpose.
 
 ## Supported Features
 
 - Cloud polling through Home Assistant's shared aiohttp session.
-- Config flow and reauthentication for manual bearer-token replacement.
-- Options flow for token replacement and polling interval.
+- Config flow for automatic sign-in or advanced manual bearer-token setup.
+- Reauthentication for automatic credentials or manual-token replacement.
+- Options flow for credential replacement and polling interval.
 - Polling interval range: 15 to 300 seconds, default 30 seconds.
 - Site, inverter, battery, and meter devices where supported by discovered
   assets.
@@ -26,7 +27,6 @@ billing, grid settlement, safety, or any other critical purpose.
 
 ## Unsupported Features
 
-- Username/password login.
 - Automatic token refresh.
 - Multi-site selection.
 - Control/write operations.
@@ -117,7 +117,8 @@ values or device identifiers.
    `custom_components` directory.
 2. Restart Home Assistant.
 3. Add the integration from Settings > Devices & services.
-4. Paste the `dtv_access_token` value when prompted.
+4. Choose "Sign in with account" and enter your iStore account/email and
+   password, or choose the advanced manual-token fallback.
 
 ## HACS Custom Repository Installation
 
@@ -134,7 +135,27 @@ the default HACS repository.
 For updates, install the new version manually or through HACS, then restart
 Home Assistant. Removing and re-adding the integration is not normally needed.
 
-## Getting Or Replacing The Access Token
+## Authentication
+
+The recommended setup path is automatic sign-in. Home Assistant fetches the
+iStore login public key, encrypts the password locally with RSA-OAEP SHA-256,
+signs in, validates the returned access token, and stores the current access
+token in the config entry.
+
+Refresh-token behavior is not proven yet. For automatic-login entries, Home
+Assistant stores the account/email and password in the config entry so it can
+perform one fresh sign-in when the access token expires or is rejected. If that
+fresh sign-in fails, Home Assistant starts reauthentication.
+
+Manual bearer-token mode remains available as an advanced fallback. Existing
+token-only entries are migrated to explicit `manual_token` mode and do not need
+to be removed and re-added.
+
+Switching between automatic sign-in and manual-token mode currently requires
+removing and re-adding the integration. Replacing credentials within the current
+mode is supported from the integration options flow or reauthentication flow.
+
+## Manual Token Fallback
 
 Chrome:
 
@@ -147,19 +168,21 @@ Chrome:
 7. Paste it into the Home Assistant setup, reauthentication, or options form.
 
 The access token is a secret. Do not post it in issues, logs, screenshots,
-diagnostics, HAR files, or commits. Manual bearer-token setup is temporary:
-automatic username/password login, token refresh, and token storage hardening
-are not implemented yet.
+diagnostics, HAR files, or commits. The iStore password is also a secret and is
+stored in the Home Assistant config entry only for automatic re-login because
+refresh-token support is not implemented yet.
 
-If the token expires, replace it from the integration options flow or complete
-reauthentication when Home Assistant prompts for a new token.
+If a manual token expires, replace it from the integration options flow or
+complete reauthentication when Home Assistant prompts for a new token. If an
+automatic-login token expires, the integration performs one fresh login and
+retries the failed request once.
 
 ## Troubleshooting
 
-- If setup says the token is invalid, copy a fresh `dtv_access_token` from the
-  browser after logging in again.
+- If setup says credentials are invalid, check the account/email and password,
+  or use the manual-token fallback with a fresh `dtv_access_token`.
 - If entities become unavailable, check whether the iStore web portal is
-  reachable and whether the token has expired.
+  reachable and whether credentials or the manual token have expired.
 - Enable debug logging for `custom_components.istore_solar` to inspect sanitized
   request diagnostics.
 - Download diagnostics from the integration entry when reporting issues.

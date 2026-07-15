@@ -61,6 +61,18 @@ class TestPrivacyHelpers(unittest.TestCase):
         self.assertNotIn("APP_PORTAL_S_", preview)
         self.assertIn(privacy.REDACTED, preview)
 
+    def test_safe_auth_presence_booleans_are_not_redacted(self) -> None:
+        data = {
+            "token_present": True,
+            "password_configured": True,
+            "entry_token_present": False,
+            "entry_password_configured": False,
+        }
+
+        redacted = privacy.redact_sensitive_data(data)
+
+        self.assertEqual(data, redacted)
+
 
 if __name__ == "__main__":
     unittest.main()

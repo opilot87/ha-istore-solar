@@ -1,0 +1,16 @@
+{
+  "description": "Artificial iStore login password-encryption vector. Fake key and fake credentials only.",
+  "algorithm": "RSA-OAEP",
+  "oaep_hash": "SHA-256",
+  "mgf1_hash": "SHA-256",
+  "public_key_format": "Base64 DER SubjectPublicKeyInfo",
+  "key_size_bits": 2048,
+  "ciphertext_encoding": "standard Base64",
+  "expected_ciphertext_bytes": 256,
+  "strategy": "RSA_2048",
+  "fake_account": "auth-vector@example.invalid",
+  "fake_password": "correct horse battery staple 0.5.0",
+  "public_key_der_base64": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAnlDIOhkX2yFtQkanrRzPG40PaLbd4PLIsMiv2uUmofih/SzlMbp+TBhk1kWfjF/6hvDBjGC4tJ68wP/RD228vXZFZfRbIddpNXfYB+bBnUXpzO5vhuWOPhPS5XCzFMrEjWGELOFJg+rNOgfXfFtZcqRbZFXhOw2y/Cqx4gyoWydxQr/idkwwj/7HRGr9t7aMhF5FgxE6PUTYWsV2wPE07WzGLAXnWrwXK04aKNNt/tvDIBga/cRvEjOuvFtKeC2KqLtYt8IZgSLMNHyiUo89sdVZ3UV7pJURpNBnv/IdxKAWuHGZgcYd3RpknVbGxdHVvQGJmOVlcnF7D20/L5WICQIDAQAB",
+  "private_key_pem": "-----BEGIN RSA PRIVATE KEY-----\nMIIEogIBAAKCAQEAnlDIOhkX2yFtQkanrRzPG40PaLbd4PLIsMiv2uUmofih/Szl\nMbp+TBhk1kWfjF/6hvDBjGC4tJ68wP/RD228vXZFZfRbIddpNXfYB+bBnUXpzO5v\nhuWOPhPS5XCzFMrEjWGELOFJg+rNOgfXfFtZcqRbZFXhOw2y/Cqx4gyoWydxQr/i\ndkwwj/7HRGr9t7aMhF5FgxE6PUTYWsV2wPE07WzGLAXnWrwXK04aKNNt/tvDIBga\n/cRvEjOuvFtKeC2KqLtYt8IZgSLMNHyiUo89sdVZ3UV7pJURpNBnv/IdxKAWuHGZ\ngcYd3RpknVbGxdHVvQGJmOVlcnF7D20/L5WICQIDAQABAoIBAEfApy8lxlkrykA6\nk65zGy8KfMxh7SgSAYGWQ5W7PAo3DPwZR/uE4c8NU06GGazep0ZXgfFkuPIr67Kx\nfwg2HU/ldciiulcZMXbpTUEvhdsJH9Eg0+1Yx2I9S91vecrXp8PIScapiM9AMSm2\n+iRDpsO92CoefklsiQ2fMCYaxIcjH8PAzAJvPluAra7erx7khE7r5kfqyLWQFOmV\n+Q1cUOHp/JMxh7LBmG7IBkJ+ZF+Px6SugCu/HA/JCrdlgWpZFVNpuM0dZFLHwsiq\nvzg/sAGam27k9eQN/AbobEY3K4W7DfdIRJ06BIx96KOwPjB+AlW2HCW+J7LtCyNV\nbcGBObECgYEAy4WLHt+NF7QjUeW5/5glGrZUNCnjFx6MZUqUNMgZY6Ks6xx35rKj\nqXRTHydwZ31Jmi1oNAdJY3CvS00c1PrdoJWP1T3AWX2sGAjokPYpRoAtUvOy+T7z\ncR4C2rnQ7aWeAnOj+SOti/WXFwKaJHVv8KS9OqqzFHyVV9F6edE7yzUCgYEAxyMv\nk9+8V0b+2FeCRWCdxHrXdQ8nbS1ZIbKGnIRMYf9NhmXr3oqgLe72l96AYbfBT5Ta\nw5ksMep5IwGc3FiINKOk5ZwrZnbVEr9o30CI9IUJXaVwPByZEWooxOkSgz2FldSE\ncAwO4m7FKnGcEK/S3qi4ZyIGy/20gi6PI3WCUAUCgYAIU2E6lRiXhKYBPq2aOCYk\nbpsJO0Fv+67wodloQ1tOiSQbxiFdjadGUlzoJFvjz+tH5F2j6zxkVgLFyNTKHa0d\nWaD1rz4EKzD0FsE01O0hVjMEdrW2no2k7f5d5kYWwrSxEvv9QClkVVql9VRK84bt\nyD95e+wxhVsyqX4iJ54TlQKBgBovrE/7ud6YPWbhiwXogJaXuMFx7rNSpUfjHAR0\n+T5hviYQPQYUoJ+prs+luKgg69C1OFdESyV9OdS6n4/yLGcPpd1zvdlJgxdmCDpj\nWB8fZ23jFXEyKYa6uQW7yG1tp6VePtQlIcfw3QiJzAX9uPMCqM0XEmG8yQHdcYEu\nMKapAoGAakaik9VIZt4jpB7y/oEMA+cK4eXcf1eACKTvek1SMFZDyEiyKOqoopGN\ngJgpBz6T7SrZoHeAV2McgLLC6t5vYqSgogmPrspPGbvyHZk4GCC+te7PA/6t8e4P\n5/n0siSvDtr7Ctbc2kCtxSpFhC4N2ywA9Ru8ezKyR2Kk7y0wqwA=\n-----END RSA PRIVATE KEY-----\n",
+  "test_note": "OAEP encryption is randomized; tests should decrypt the produced ciphertext with this private key and assert the fake password, not compare a fixed ciphertext."
+}

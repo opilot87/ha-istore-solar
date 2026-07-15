@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
@@ -10,10 +10,21 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers import entity_registry as er
 
-from .api import IStoreSolarApiClient
+from .api import IStoreSolarApiClient, IStoreSolarLoginResult
 from .const import (
+    AUTH_MODE_AUTOMATIC,
+    AUTH_MODE_MANUAL_TOKEN,
     CONF_ACCESS_TOKEN,
+    CONF_ACCOUNT,
+    CONF_AUTH_MODE,
+    CONF_AUTOMATIC_RELOGIN_COUNT,
+    CONF_LAST_AUTH_ERROR_CLASS,
+    CONF_LATEST_LOGIN_SUCCESS,
+    CONF_PASSWORD,
     CONF_SCAN_INTERVAL,
+    CONF_TOKEN_CREATE_TIME,
+    CONF_TOKEN_EXPIRES,
+    CONF_TOKEN_REFRESH_TIME,
     DEFAULT_SCAN_INTERVAL_SECONDS,
     DOMAIN,
 )
@@ -36,9 +47,35 @@ async def async_setup_entry(
     entry: IStoreSolarConfigEntry,
 ) -> bool:
     """Set up iStore Solar from a config entry."""
+
+    async def _async_store_login_result(
+        result: IStoreSolarLoginResult,
+        relogin_count: int,
+    ) -> None:
+        data = dict(entry.data)
+        data.update(
+            {
+                CONF_ACCESS_TOKEN: result.access_token,
+                CONF_TOKEN_EXPIRES: result.expires,
+                CONF_TOKEN_CREATE_TIME: result.create_time,
+                CONF_TOKEN_REFRESH_TIME: result.refresh_time,
+                CONF_LATEST_LOGIN_SUCCESS: datetime.now().isoformat(),
+                CONF_AUTOMATIC_RELOGIN_COUNT: relogin_count,
+                CONF_LAST_AUTH_ERROR_CLASS: None,
+            }
+        )
+        hass.config_entries.async_update_entry(entry, data=data)
+
+    auth_mode = entry.data.get(CONF_AUTH_MODE, AUTH_MODE_MANUAL_TOKEN)
     client = IStoreSolarApiClient(
         async_get_clientsession(hass),
         access_token=entry.data[CONF_ACCESS_TOKEN],
+        auth_mode=auth_mode,
+        account=entry.data.get(CONF_ACCOUNT),
+        password=entry.data.get(CONF_PASSWORD),
+        token_update_callback=_async_store_login_result
+        if auth_mode == AUTH_MODE_AUTOMATIC
+        else None,
     )
     scan_interval = entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL_SECONDS)
     coordinator = IStoreSolarDataUpdateCoordinator(
@@ -91,8 +128,11 @@ async def async_migrate_entry(
                 )
                 break
 
-    if entry.version < 3:
-        hass.config_entries.async_update_entry(entry, version=3)
+    if entry.version < 4:
+        data = dict(entry.data)
+        if CONF_AUTH_MODE not in data:
+            data[CONF_AUTH_MODE] = AUTH_MODE_MANUAL_TOKEN
+        hass.config_entries.async_update_entry(entry, data=data, version=4)
     return True
 
 

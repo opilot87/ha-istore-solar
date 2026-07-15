@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from asyncio import TimeoutError as AsyncTimeoutError
+import base64
 from dataclasses import dataclass, field
 from datetime import datetime
 import json
@@ -12,10 +13,15 @@ import time
 from typing import Any, Final, NoReturn
 
 from aiohttp import ClientError, ClientSession, ClientTimeout
+from cryptography.exceptions import InvalidKey
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
 from .const import (
     API_BASE_URL,
     APP_ID,
+    AUTH_MODE_AUTOMATIC,
+    AUTH_MODE_MANUAL_TOKEN,
     DEFAULT_LOCALE,
     DOMAIN,
     MANUFACTURER,
@@ -58,6 +64,7 @@ from .privacy import (
 REQUEST_TIMEOUT: Final = ClientTimeout(total=20)
 LOGGER = logging.getLogger(__name__)
 PERMISSION_DENIED_CODE: Final = 88203
+INVALID_CREDENTIALS_CODE: Final = 88915
 JSON_UNSET: Final = object()
 ASSET_TREE_SITE_TYPE: Final = "Hossain-site"
 BATTERY_TOTAL_MEASUREMENT_POINTS: Final = (
@@ -69,6 +76,14 @@ METER_TOTAL_MEASUREMENT_POINTS: Final = (
 TEMPORARY_HTTP_STATUSES: Final = {429, 502, 503, 504}
 MAX_TEMPORARY_REQUEST_ATTEMPTS: Final = 2
 RETRY_BACKOFF_SECONDS: Final = 1
+LOGIN_TOKEN_KEYS: Final = (
+    "id",
+    "token",
+    "accessToken",
+    "access_token",
+    "accessTokenKey",
+)
+SESSION_TOKEN_MIN_LENGTH: Final = 20
 
 SITE_LIVE_MEASUREMENT_POINTS: Final = ",".join(
     (
@@ -134,6 +149,22 @@ class IStoreSolarPermissionDeniedError(IStoreSolarApiError):
     """Raised when the API denies a specific authorized request."""
 
 
+class IStoreSolarMalformedPublicKeyError(IStoreSolarError):
+    """Raised when the login public key cannot be used."""
+
+
+class IStoreSolarEncryptionError(IStoreSolarError):
+    """Raised when password encryption fails."""
+
+
+class IStoreSolarUnexpectedLoginResponseError(IStoreSolarError):
+    """Raised when the login/session response shape is unsupported."""
+
+
+class IStoreSolarTokenMismatchError(IStoreSolarAuthenticationError):
+    """Raised when session and user-info tokens do not match."""
+
+
 @dataclass(slots=True, frozen=True)
 class _ResponseContext:
     """Sanitized response context for downstream schema validation."""
@@ -144,6 +175,26 @@ class _ResponseContext:
     content_type: str | None
     response_preview: str | None
     application_code: int | str | None
+    auth_token_header: str | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class IStoreSolarPublicKey:
+    """Public key and strategy returned by the login endpoint."""
+
+    public_key: str
+    strategy: str
+
+
+@dataclass(slots=True, frozen=True)
+class IStoreSolarLoginResult:
+    """Validated login result safe for config-entry storage."""
+
+    access_token: str
+    user_info: dict[str, Any]
+    expires: int | str | None = None
+    create_time: int | str | None = None
+    refresh_time: int | str | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -225,24 +276,258 @@ class IStoreSolarApiClient:
         self,
         session: ClientSession,
         *,
-        access_token: str,
+        access_token: str = "",
+        auth_mode: str = AUTH_MODE_MANUAL_TOKEN,
+        account: str | None = None,
+        password: str | None = None,
+        token_update_callback: Any | None = None,
         base_url: str = API_BASE_URL,
         locale: str = DEFAULT_LOCALE,
     ) -> None:
         """Initialize the API client."""
         self._session = session
         self._access_token = access_token.strip()
+        self._auth_mode = auth_mode
+        self._account = account
+        self._password = password
+        self._token_update_callback = token_update_callback
         self._base_url = base_url.rstrip("/")
         self._locale = locale
         self._user_info: dict[str, Any] | None = None
         self._discovered_site: _DiscoveredSite | None = None
         self._previous_cumulative_values: dict[str, float | int] = {}
         self._cumulative_decreases: set[str] = set()
+        self._login_lock = asyncio.Lock()
+        self._automatic_relogin_count = 0
+        self._latest_login_success: float | None = None
+        self._last_auth_error_class: str | None = None
 
     @property
     def discovery_cached(self) -> bool:
         """Return whether site discovery has completed and been cached."""
         return self._discovered_site is not None
+
+    @property
+    def auth_diagnostics(self) -> dict[str, Any]:
+        """Return sanitized authentication diagnostics."""
+        return {
+            "auth_mode": self._auth_mode,
+            "token_present": bool(self._access_token),
+            "password_configured": bool(self._password)
+            if self._auth_mode == AUTH_MODE_AUTOMATIC
+            else False,
+            "latest_login_success": self._latest_login_success,
+            "automatic_relogin_count": self._automatic_relogin_count,
+            "last_auth_error_class": self._last_auth_error_class,
+        }
+
+    async def async_get_public_key(self) -> IStoreSolarPublicKey:
+        """Return the RSA public key used by the login form."""
+        response = await self._request(
+            "GET",
+            "/hossain-bff/framework/v1.0/user/public-key",
+            authenticated=False,
+            operation="public-key retrieval",
+        )
+        data = response.payload.get("data")
+        if not isinstance(data, dict):
+            err = IStoreSolarUnexpectedLoginResponseError(
+                "public-key response missing data",
+                path=response.path,
+                status=response.status,
+                content_type=response.content_type,
+                response_preview=response.response_preview,
+                operation="public-key retrieval",
+            )
+            _raise_logged_api_exception(err)
+        public_key = data.get("publicKey")
+        strategy = data.get("strategy")
+        if not isinstance(public_key, str) or not isinstance(strategy, str):
+            err = IStoreSolarUnexpectedLoginResponseError(
+                "public-key response missing expected fields",
+                path=response.path,
+                status=response.status,
+                content_type=response.content_type,
+                response_preview=response.response_preview,
+                operation="public-key retrieval",
+            )
+            _raise_logged_api_exception(err)
+        return IStoreSolarPublicKey(public_key=public_key, strategy=strategy)
+
+    async def async_encrypt_password(self, public_key: str, password: str) -> str:
+        """Encrypt a plaintext password with the confirmed browser algorithm."""
+        try:
+            key_bytes = base64.b64decode(public_key, validate=True)
+            loaded_key = serialization.load_der_public_key(key_bytes)
+        except (ValueError, TypeError) as err:
+            raise IStoreSolarMalformedPublicKeyError(
+                "iStore Solar public key was malformed",
+                operation="password encryption",
+            ) from err
+
+        if not isinstance(loaded_key, rsa.RSAPublicKey):
+            raise IStoreSolarMalformedPublicKeyError(
+                "iStore Solar public key was not RSA",
+                operation="password encryption",
+            )
+
+        try:
+            ciphertext = loaded_key.encrypt(
+                password.encode("utf-8"),
+                padding.OAEP(
+                    mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                    algorithm=hashes.SHA256(),
+                    label=None,
+                ),
+            )
+        except (ValueError, InvalidKey) as err:
+            raise IStoreSolarEncryptionError(
+                "could not encrypt iStore Solar password",
+                operation="password encryption",
+            ) from err
+
+        return base64.b64encode(ciphertext).decode("ascii")
+
+    async def async_login(self, account: str, password: str) -> tuple[str, str]:
+        """Perform the login request and return the login token and organization ID."""
+        key = await self.async_get_public_key()
+        encrypted_password = await self.async_encrypt_password(key.public_key, password)
+        response = await self._request(
+            "POST",
+            "/hossain-bff/framework/v1.0/user/login",
+            authenticated=False,
+            json_data={
+                "strategy": key.strategy,
+                "account": account,
+                "password": encrypted_password,
+            },
+            operation="login",
+        )
+        token = _extract_login_token(response.payload, response.auth_token_header)
+        org_id = _extract_login_org_id(response.payload)
+        if token is None:
+            err = IStoreSolarUnexpectedLoginResponseError(
+                "login response missing access token",
+                path=response.path,
+                status=response.status,
+                content_type=response.content_type,
+                response_preview=response.response_preview,
+                operation="login",
+            )
+            _raise_logged_api_exception(err)
+        if org_id is None:
+            err = IStoreSolarUnexpectedLoginResponseError(
+                "login response missing organization",
+                path=response.path,
+                status=response.status,
+                content_type=response.content_type,
+                response_preview=response.response_preview,
+                operation="login",
+            )
+            _raise_logged_api_exception(err)
+        return token, org_id
+
+    async def async_set_session(self, token: str, org_id: str) -> None:
+        """Select the working organization for the freshly logged-in token."""
+        await self._request(
+            "POST",
+            "/hossain-bff/framework/v1.0/user/set-session",
+            access_token=token,
+            json_data={"orgId": org_id},
+            operation="set-session",
+        )
+
+    async def async_get_portal_session(self, token: str) -> dict[str, Any]:
+        """Return the portal session data for a freshly logged-in token."""
+        response = await self._request(
+            "POST",
+            "/app-portal/web/v1/session/get",
+            access_token=token,
+            raw_data="null",
+            extra_headers={"Locale": self._locale},
+            params={"_sid_": str(int(time.time() * 1000))},
+            operation="session retrieval",
+        )
+        data = response.payload.get("data")
+        if not isinstance(data, dict):
+            err = IStoreSolarUnexpectedLoginResponseError(
+                "session response missing data",
+                path=response.path,
+                status=response.status,
+                content_type=response.content_type,
+                response_preview=response.response_preview,
+                operation="session retrieval",
+            )
+            _raise_logged_api_exception(err)
+        return data
+
+    async def async_validate_token(self, access_token: str) -> dict[str, Any]:
+        """Validate one bearer token without mutating the client token."""
+        previous_token = self._access_token
+        self._access_token = access_token.strip()
+        try:
+            return await self.async_get_user_info()
+        finally:
+            self._access_token = previous_token
+
+    async def async_login_and_get_token(
+        self,
+        account: str,
+        password: str,
+    ) -> IStoreSolarLoginResult:
+        """Perform the full confirmed login sequence and validate the bearer token."""
+        login_token, org_id = await self.async_login(account, password)
+        await self.async_set_session(login_token, org_id)
+        session_data = await self.async_get_portal_session(login_token)
+        session_token = session_data.get("id")
+        if not isinstance(session_token, str) or len(session_token) < SESSION_TOKEN_MIN_LENGTH:
+            raise IStoreSolarUnexpectedLoginResponseError(
+                "session response missing access token",
+                operation="token extraction",
+            )
+
+        previous_token = self._access_token
+        self._access_token = session_token
+        try:
+            user_info = await self.async_get_user_info()
+        finally:
+            self._access_token = previous_token
+        user_info_token = user_info.get("token")
+        if isinstance(user_info_token, str) and user_info_token != session_token:
+            raise IStoreSolarTokenMismatchError(
+                "session token did not match user-info token",
+                operation="token validation",
+            )
+        if not isinstance(user_info_token, str):
+            raise IStoreSolarUnexpectedLoginResponseError(
+                "user-info response missing token",
+                operation="token validation",
+            )
+
+        return IStoreSolarLoginResult(
+            access_token=session_token,
+            user_info=user_info,
+            expires=_safe_session_metadata(session_data.get("expires")),
+            create_time=_safe_session_metadata(session_data.get("createTime")),
+            refresh_time=_safe_session_metadata(session_data.get("refreshTime")),
+        )
+
+    async def async_refresh_access_token(self) -> IStoreSolarLoginResult:
+        """Perform one automatic relogin and replace the current token."""
+        if self._auth_mode != AUTH_MODE_AUTOMATIC or not self._account or not self._password:
+            raise IStoreSolarAuthenticationError(
+                "automatic login credentials are not configured",
+                operation="automatic relogin",
+            )
+        async with self._login_lock:
+            result = await self.async_login_and_get_token(self._account, self._password)
+            self._access_token = result.access_token
+            self._latest_login_success = time.time()
+            self._last_auth_error_class = None
+            self._automatic_relogin_count += 1
+            if self._token_update_callback is not None:
+                await self._token_update_callback(result, self._automatic_relogin_count)
+            return result
 
     async def async_get_user_info(self) -> dict[str, Any]:
         """Return account metadata for the configured bearer token."""
@@ -573,10 +858,14 @@ class IStoreSolarApiClient:
         json_data: Any = JSON_UNSET,
         raw_data: str | None = None,
         extra_headers: dict[str, str] | None = None,
+        authenticated: bool = True,
+        access_token: str | None = None,
+        allow_relogin: bool = True,
         operation: str,
     ) -> _ResponseContext:
-        """Send one authenticated request and return the JSON object body."""
-        if not self._access_token:
+        """Send one API request and return the JSON object body."""
+        token = access_token if access_token is not None else self._access_token
+        if authenticated and not token:
             err = IStoreSolarAuthenticationError(
                 "missing access token",
                 path=path,
@@ -585,10 +874,11 @@ class IStoreSolarApiClient:
             _raise_logged_api_exception(err)
 
         headers = {
-            "Authorization": f"Bearer {self._access_token}",
             "Content-Type": "application/json",
             "locale": self._locale,
         }
+        if authenticated:
+            headers["Authorization"] = f"Bearer {token}"
         if extra_headers is not None:
             headers.update(extra_headers)
 
@@ -686,6 +976,30 @@ class IStoreSolarApiClient:
                 raise last_connection_error from err
             except IStoreSolarError as err:
                 _log_api_exception(err, err)
+                if (
+                    allow_relogin
+                    and authenticated
+                    and access_token is None
+                    and isinstance(err, IStoreSolarAuthenticationError)
+                    and self._auth_mode == AUTH_MODE_AUTOMATIC
+                ):
+                    try:
+                        await self.async_refresh_access_token()
+                    except IStoreSolarError as login_err:
+                        self._last_auth_error_class = type(login_err).__name__
+                        raise login_err from err
+                    return await self._request(
+                        method,
+                        path,
+                        params=params,
+                        json_data=json_data,
+                        raw_data=raw_data,
+                        extra_headers=extra_headers,
+                        authenticated=authenticated,
+                        access_token=None,
+                        allow_relogin=False,
+                        operation=operation,
+                    )
                 raise
         else:
             assert last_connection_error is not None
@@ -712,6 +1026,46 @@ class IStoreSolarApiClient:
             if code in (401, 403, "401", "403"):
                 err = IStoreSolarAuthenticationError(
                     "access token was rejected",
+                    path=path,
+                    status=response.status,
+                    content_type=content_type,
+                    response_preview=response_preview,
+                    operation=operation,
+                )
+                if (
+                    allow_relogin
+                    and authenticated
+                    and access_token is None
+                    and self._auth_mode == AUTH_MODE_AUTOMATIC
+                ):
+                    try:
+                        await self.async_refresh_access_token()
+                    except IStoreSolarError as login_err:
+                        self._last_auth_error_class = type(login_err).__name__
+                        raise login_err from err
+                    return await self._request(
+                        method,
+                        path,
+                        params=params,
+                        json_data=json_data,
+                        raw_data=raw_data,
+                        extra_headers=extra_headers,
+                        authenticated=authenticated,
+                        access_token=None,
+                        allow_relogin=False,
+                        operation=operation,
+                    )
+                try:
+                    raise err
+                except IStoreSolarAuthenticationError as raised:
+                    _log_api_exception(raised, raised)
+                    raise
+            if (
+                operation == "login"
+                and code in (INVALID_CREDENTIALS_CODE, str(INVALID_CREDENTIALS_CODE))
+            ):
+                err = IStoreSolarAuthenticationError(
+                    "iStore Solar credentials were rejected",
                     path=path,
                     status=response.status,
                     content_type=content_type,
@@ -758,6 +1112,7 @@ class IStoreSolarApiClient:
             content_type=content_type,
             response_preview=response_preview,
             application_code=code,
+            auth_token_header=_auth_token_from_headers(response.headers),
         )
 
     def _normalize_telemetry(
@@ -1448,6 +1803,70 @@ def _sanitize_application_message(value: Any) -> str:
     if not isinstance(value, str) or not value.strip():
         return "empty"
     return _sanitize_text(value)
+
+
+def _extract_login_token(
+    payload: dict[str, Any],
+    auth_token_header: str | None = None,
+) -> str | None:
+    """Extract a token-like value from the confirmed login response family."""
+    candidates: list[str] = []
+
+    def walk(value: Any, key: str = "") -> None:
+        if isinstance(value, dict):
+            for child_key, child_value in value.items():
+                walk(child_value, child_key)
+        elif (
+            isinstance(value, str)
+            and key in LOGIN_TOKEN_KEYS
+            and len(value) >= SESSION_TOKEN_MIN_LENGTH
+        ):
+            candidates.append(value)
+
+    walk(payload)
+    if auth_token_header is not None:
+        candidates.append(auth_token_header)
+    return candidates[0] if candidates else None
+
+
+def _auth_token_from_headers(headers: Any) -> str | None:
+    """Extract an internal token candidate from response headers."""
+    for name in ("Authorization", "access-token", "x-access-token"):
+        value = headers.get(name)
+        if not isinstance(value, str):
+            continue
+        token = value.removeprefix("Bearer ").strip()
+        if len(token) >= SESSION_TOKEN_MIN_LENGTH:
+            return token
+    return None
+
+
+def _extract_login_org_id(payload: dict[str, Any]) -> str | None:
+    """Extract an organization ID from login-shaped response data."""
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        return None
+    for key in ("orgId", "organizationId"):
+        value = _string_value(data.get(key))
+        if value is not None:
+            return value
+
+    working_org = _dict_value(data, "workingOrganization")
+    value = _string_value(working_org.get("id"))
+    if value is not None:
+        return value
+
+    user = _dict_value(data, "user")
+    return _string_value(user.get("orgId"))
+
+
+def _safe_session_metadata(value: Any) -> int | str | None:
+    """Return session metadata only when it is a scalar safe for storage."""
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value:
+        return value
+    return None
 
 
 def _raise_logged_api_exception(err: IStoreSolarError) -> NoReturn:

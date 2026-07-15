@@ -43,9 +43,43 @@ Observed login request body keys:
 }
 ```
 
-The working browser request shows the `password` field as a long base64-like
-string, not a normal plaintext-shaped value. The real value is private and is
-not recorded here.
+The controlled authentication capture confirms that the `password` field is an
+RSA-encrypted password value. The real account, plaintext password, encrypted
+password, and tokens are private and are not recorded here.
+
+Confirmed password-encryption metadata:
+
+- Public-key endpoint: `GET /hossain-bff/framework/v1.0/user/public-key`
+- Public-key response fields: `data.publicKey`, `data.strategy`
+- Public-key format: standard Base64 DER SubjectPublicKeyInfo
+- Public-key algorithm OID: `rsaEncryption` (`1.2.840.113549.1.1.1`)
+- RSA key size: 2048 bits
+- Public exponent: 65537
+- Login strategy string length: 8; observed value denotes RSA 2048
+- Plaintext encoding: the temporary test password is ASCII/UTF-8 compatible
+- Padding mode: RSA-OAEP
+- OAEP hash: SHA-256
+- MGF1 hash: SHA-256
+- Submitted ciphertext encoding: standard Base64, not URL-safe Base64
+- Submitted ciphertext length: 344 characters, decoding to one 256-byte RSA
+  ciphertext block
+- Multiple captures of the same temporary password produced distinct
+  ciphertext values, so the encryption is randomized
+- No request body field, query parameter, or trace metadata shows a separate
+  salt, nonce, timestamp, prefix, suffix, hash, or JSON wrapper
+
+A controlled live padding test against the temporary private test account
+confirmed that only RSA-OAEP with SHA-256 for both the OAEP hash and MGF1 hash
+completed the full login proof. RSAES-PKCS1-v1_5 and RSA-OAEP with SHA-1 both
+returned unsuccessful application results in the same one-attempt-per-scheme
+test. Success was counted only after `session/get` returned a usable `data.id`
+token and `user-info` validated with `Authorization: Bearer <TOKEN>`.
+
+An artificial fake-key test vector for unit tests is stored at
+`tests/fixtures/istore_auth_rsa_oaep_sha256_vector.json`. Because OAEP
+encryption is randomized, tests should decrypt the generated ciphertext with
+the fixture private key and assert the fake plaintext rather than compare a
+fixed ciphertext string.
 
 Observed successful login response:
 
@@ -55,9 +89,9 @@ Observed successful login response:
 - No `Set-Cookie` values observed in the HAR parser output
 - No response cookies observed
 
-After login, the browser sends a bootstrap sequence. The first request after
-login did not use `_sid_`. In the newest preserved-log capture, the next
-request did.
+In the controlled login trace, successful login immediately writes
+`access_token_key`, then calls `set-session` with that bearer token. A later
+session/bootstrap step writes `refresh_token_key`.
 
 Sanitized sequence immediately after the captured login:
 
@@ -77,9 +111,11 @@ Sanitized sequence immediately after the captured login:
 11. `POST /app-portal/web/v1/event/log/produce?_sid_=<UNKNOWN_SID_PARAM>`
 
 Later Copy-as-cURL evidence confirms that working API requests send
-`Authorization: Bearer <ACCESS_TOKEN>`. The bearer value matches the
-`dtv_access_token` Local Storage value, not `access_token_key`,
-`refresh_token_key`, `dtv_c_authn`, or `current_user_info`.
+`Authorization: Bearer <ACCESS_TOKEN>`. In earlier captures, the bearer value
+matched the `dtv_access_token` Local Storage value. In the controlled trace,
+`access_token_key` is the first observed storage write for the newly created
+access token, and `set-session`, `session/get`, and `user-info` all use or
+return the same 45-character access token.
 
 ## Unresolved Authentication Questions
 
@@ -256,6 +292,43 @@ Confirmed persistence after refresh:
 - User/bootstrap keys also persisted after refresh.
 - Session Storage keys added after login also persisted across the tested page
   refresh, which indicates the same browser tab/session was retained.
+
+Controlled clean-login trace:
+
+- Login request:
+  - Method/path: `POST /hossain-bff/framework/v1.0/user/login`
+  - Query keys: none
+  - Required body keys: `strategy`, `account`, `password`
+  - Required request headers observed: `Accept`, `Content-Type`
+  - No bearer `Authorization` header is sent
+- Token storage immediately after login:
+  - `current_user_info` written by `handleLoginSuccessful`
+  - `access_token_key` written by `setAccessToken`
+- Session request:
+  - Method/path: `POST /hossain-bff/framework/v1.0/user/set-session`
+  - Query keys: none
+  - Required body key: `orgId`
+  - Required request headers observed: `Accept`, `Content-Type`, `locale`,
+    `Authorization`
+  - `Authorization` uses the newly written access token
+- Token storage after session/bootstrap:
+  - `access_token_key` written again by `setAccessToken`
+  - `refresh_token_key` written by `setRefreshToken`
+  - `current_user` written by `setCurrentUser`
+  - `companyId` written as a separate key
+- `session/get` response:
+  - `data.id` is the access token
+  - `data.expires`, `data.createTime`, and `data.refreshTime` are present
+  - `data.generatedByRefreshToken` is present
+- `user-info` response:
+  - `data.token` equals `session/get` `data.id`
+  - This confirms the access token but is not the first observed source
+
+The controlled trace did not show a `dtv_access_token` write. Earlier working
+browser captures used `dtv_access_token` as the bearer source, so the current
+implementation should treat `session/get` `data.id`, `user-info.data.token`,
+`access_token_key`, and `dtv_access_token` as same-token evidence while the
+portal's current storage aliases are rechecked.
 
 Inference:
 
@@ -602,17 +675,24 @@ Login and refresh-token evidence:
 - The working login request does not send an `Authorization` header.
 - The working login request body contains `account`, `password`, and
   `strategy`.
-- The working login `password` value is long and base64-like. This indicates
-  frontend encryption or transformation before submission.
-- HAR captures show `GET /hossain-bff/framework/v1.0/user/public-key` before login
-  in one flow, which is consistent with password encryption, but the
-  algorithm/padding/encoding are not proven.
-- Successful login and `set-session` responses are empty in the HAR captures
-  and do not set cookies or redirect.
+- The working login password value is an RSA-encrypted standard Base64
+  ciphertext produced from the plaintext password.
+- The public-key endpoint returns a 2048-bit RSA SubjectPublicKeyInfo public
+  key and a matching strategy value.
+- Successful login response bodies are empty in the HAR captures and do not set
+  cookies or redirect.
+- Immediately after login, frontend code writes `access_token_key` and then
+  calls `set-session` with `Authorization: Bearer <ACCESS_TOKEN>`.
+- `set-session` sends JSON body key `orgId` and requires the newly written
+  access token.
+- `session/get` returns `data.id`, `data.expires`, `data.createTime`, and
+  `data.refreshTime`. Its `data.id` equals the token later returned by
+  `user-info.data.token`.
+- `refresh_token_key` is written during the clean login and has token-like
+  length, but no captured response body exposes the refresh-token value or
+  source field.
 - No working request sends `refresh_token_key`, and no refresh endpoint was
-  observed. A refresh-token flow is not required for short-lived experimental
-  polling after login/token acquisition, but it will probably be required for a
-  robust integration.
+  observed.
 
 Confirmed reproducibility boundary:
 
@@ -620,17 +700,20 @@ Confirmed reproducibility boundary:
   appear reproducible with `aiohttp` without a browser by sending
   `Authorization: Bearer <ACCESS_TOKEN>` and the same sanitized JSON body
   shapes documented below.
-- Login is not fully reproducible yet because the password transformation and
-  exact token-creation path remain unresolved.
+- Access-token extraction is now proven through the login/set-session/session
+  bootstrap path. Username/password login is now reproducible without a
+  browser using RSA-OAEP with SHA-256 and MGF1-SHA-256.
 
 Minimum request sequence inferred from working evidence:
 
 1. Login/token acquisition:
    - `GET /hossain-bff/framework/v1.0/user/public-key`
-   - transform password according to the frontend login algorithm
+   - encrypt password with the returned RSA public key using RSA-OAEP,
+     SHA-256, and MGF1-SHA-256
    - `POST /hossain-bff/framework/v1.0/user/login`
+   - read/store the access token written by frontend login handling
    - `POST /hossain-bff/framework/v1.0/user/set-session`
-   - obtain or persist `dtv_access_token` as `<ACCESS_TOKEN>`
+   - obtain or confirm `<ACCESS_TOKEN>` from `session/get` `data.id`
 2. Authentication bootstrap:
    - `POST /app-portal/web/v1/user/app/asset/tree?...&_sid_=<UNKNOWN_SID_PARAM>`
    - optional `POST /app-portal/web/v1/session/get?_sid_=<UNKNOWN_SID_PARAM>`
@@ -647,14 +730,32 @@ Minimum request sequence inferred from working evidence:
    - `POST /dt-service/datasource/v2/data/query?_p=<OPAQUE_QUERY_VALUE>` with
      `X-APPID`, `X-NS`, and `X-CK` for dashboard batch queries where required.
 
-Evidence still missing before implementing full login:
+Evidence still missing before robust authentication:
 
-- The frontend password transformation algorithm for the `login` request.
-- Whether `dtv_access_token` is returned by a hidden response, created by the
-  portal shell, produced by `set-session`, or copied from `user-info.data.token`
-  in the same login generation.
+- The exact frontend source that writes both access-token storage keys and
+  maps the clean-login token to `dtv_access_token`, if that alias is still used
+  by the current portal build.
 - The exact source of `X-CK` for data-query requests.
 - The refresh endpoint and refresh request/response shape.
+
+Proposed private v0.5.0 authentication design:
+
+- Keep the current manual bearer-token setup path as a fallback.
+- Add an optional username/password setup path using the confirmed RSA-OAEP
+  SHA-256 password transformation.
+- During setup, fetch `public-key`, encrypt the password locally, call `login`,
+  call `set-session`, then confirm the access token through `session/get` and
+  `user-info`.
+- Store Home Assistant credentials using the normal config-entry secret
+  storage path; do not persist plaintext credentials in logs, diagnostics, or
+  exported traces.
+- Until refresh is proven, handle expiry by performing a conservative re-login
+  when stored credentials are available, or by raising reauthentication when
+  only a manual token is configured.
+- Retry at most once after a token refresh/re-login path before surfacing the
+  original API error category.
+- Redact account names, passwords, access tokens, refresh tokens, `_sid_`,
+  organization IDs, and all site/device identifiers from diagnostics.
 
 1. **Login response headers**
    - The captured successful login responses have HTTP `200`, no response body, no observed

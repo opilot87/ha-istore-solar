@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.5.0
+
+- Added automatic account/password login using the confirmed RSA-OAEP
+  SHA-256 password transformation.
+- Added automatic one-shot re-login when an automatic-login entry receives an
+  authentication failure.
+- Kept manual bearer-token setup as an advanced fallback.
+- Migrated existing token-only entries to explicit `manual_token` auth mode
+  without requiring remove/re-add.
+- Added sanitized authentication diagnostics and redaction coverage for account,
+  password, encrypted password, public key, token, and session metadata.
+- Refresh-token support remains unimplemented; automatic entries store the
+  password in the Home Assistant config entry so they can sign in again.
+
 ## 0.4.0
 
 - Promoted validated meter lifetime counters to `Total grid imported energy`

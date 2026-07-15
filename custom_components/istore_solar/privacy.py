@@ -14,6 +14,7 @@ SENSITIVE_KEYS: Final[tuple[str, ...]] = (
     "account",
     "address",
     "authorization",
+    "cipher",
     "cookie",
     "customer",
     "device",
@@ -27,6 +28,8 @@ SENSITIVE_KEYS: Final[tuple[str, ...]] = (
     "owner",
     "password",
     "phone",
+    "publickey",
+    "public_key",
     "serial",
     "session",
     "sid",
@@ -34,6 +37,13 @@ SENSITIVE_KEYS: Final[tuple[str, ...]] = (
     "token",
     "uri",
     "user",
+)
+
+SAFE_DIAGNOSTIC_KEYS: Final[tuple[str, ...]] = (
+    "entry_password_configured",
+    "entry_token_present",
+    "password_configured",
+    "token_present",
 )
 
 SENSITIVE_VALUE_PATTERNS: Final[tuple[re.Pattern[str], ...]] = (
@@ -53,7 +63,9 @@ def redact_sensitive_data(value: Any) -> Any:
         redacted: dict[str, Any] = {}
         for key, item in value.items():
             lowered = str(key).lower()
-            if any(sensitive in lowered for sensitive in SENSITIVE_KEYS):
+            if lowered in SAFE_DIAGNOSTIC_KEYS:
+                redacted[key] = redact_sensitive_data(item)
+            elif any(sensitive in lowered for sensitive in SENSITIVE_KEYS):
                 redacted[key] = REDACTED
             else:
                 redacted[key] = redact_sensitive_data(item)

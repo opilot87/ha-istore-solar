@@ -3,13 +3,42 @@
     "step": {
       "user": {
         "title": "iStore Solar",
-        "description": "Set up the experimental iStore Solar integration with the Local Storage value named dtv_access_token. Username/password login is not supported yet. {error_detail}",
+        "description": "Choose how Home Assistant should authenticate with iStore Solar.",
+        "menu_options": {
+          "automatic": "Sign in with account",
+          "manual_token": "Use access token manually"
+        }
+      },
+      "automatic": {
+        "title": "Sign in to iStore Solar",
+        "description": "Home Assistant will store your account and password in the config entry so it can sign in again when the access token expires. Refresh-token support is not implemented yet. {error_detail}",
+        "data": {
+          "name": "Name",
+          "account": "Account/email",
+          "password": "Password"
+        }
+      },
+      "manual_token": {
+        "title": "Use iStore Solar access token manually",
+        "description": "Advanced fallback setup with the Local Storage value named dtv_access_token. {error_detail}",
         "data": {
           "name": "Name",
           "access_token": "Access token"
         }
       },
       "reauth_confirm": {
+        "title": "Update iStore Solar credentials",
+        "description": "Update the credentials for this iStore Solar entry. {error_detail}"
+      },
+      "reauth_automatic": {
+        "title": "Update iStore Solar sign-in",
+        "description": "Enter the account and password again. Home Assistant will preserve existing devices and entities. {error_detail}",
+        "data": {
+          "account": "Account/email",
+          "password": "Password"
+        }
+      },
+      "reauth_manual_token": {
         "title": "Update iStore Solar access token",
         "description": "Enter a replacement dtv_access_token from the iStore portal. {error_detail}",
         "data": {
@@ -20,10 +49,14 @@
     "error": {
       "api_error": "The iStore API returned an error",
       "cannot_connect": "Failed to connect",
+      "encryption_failed": "Could not encrypt the password",
       "invalid_scan_interval": "Polling interval must be between 15 and 300 seconds",
-      "invalid_auth": "Invalid or expired access token",
+      "invalid_auth": "Invalid credentials or expired access token",
+      "malformed_public_key": "The iStore login public key could not be used",
       "malformed_response": "The iStore API response could not be understood",
       "server_error": "The iStore API returned an error",
+      "token_mismatch": "The iStore session token could not be verified",
+      "unexpected_login_response": "The iStore login response could not be understood",
       "unsupported_response": "This iStore account response is not supported yet",
       "wrong_account": "The replacement token belongs to a different account",
       "unknown": "Unexpected error"
@@ -39,6 +72,22 @@
     "step": {
       "init": {
         "title": "iStore Solar options",
+        "description": "Update credentials or polling interval. Switching authentication modes requires removing and re-adding the integration. {error_detail}",
+        "data": {
+          "scan_interval": "Polling interval"
+        }
+      },
+      "automatic": {
+        "title": "iStore Solar sign-in options",
+        "description": "Update the account or polling interval. Leave the password blank to keep the existing stored password. {error_detail}",
+        "data": {
+          "account": "Account/email",
+          "password_replacement": "Replacement password",
+          "scan_interval": "Polling interval"
+        }
+      },
+      "manual_token": {
+        "title": "iStore Solar token options",
         "description": "Update the manual access token or polling interval. Leave the access token blank to keep the current token. {error_detail}",
         "data": {
           "access_token": "Replacement access token",
@@ -49,8 +98,12 @@
     "error": {
       "api_error": "The iStore API returned an error",
       "cannot_connect": "Failed to connect",
+      "encryption_failed": "Could not encrypt the password",
       "invalid_scan_interval": "Polling interval must be between 15 and 300 seconds",
-      "invalid_auth": "Invalid or expired access token",
+      "invalid_auth": "Invalid credentials or expired access token",
+      "malformed_public_key": "The iStore login public key could not be used",
+      "token_mismatch": "The iStore session token could not be verified",
+      "unexpected_login_response": "The iStore login response could not be understood",
       "unsupported_response": "This iStore account response is not supported yet",
       "wrong_account": "The replacement token belongs to a different account",
       "unknown": "Unexpected error"

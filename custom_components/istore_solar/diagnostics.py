@@ -8,7 +8,16 @@ from homeassistant.core import HomeAssistant
 
 from . import IStoreSolarConfigEntry
 from .api import redact_sensitive_data
-from .const import CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL_SECONDS
+from .const import (
+    CONF_ACCESS_TOKEN,
+    CONF_AUTH_MODE,
+    CONF_PASSWORD,
+    CONF_SCAN_INTERVAL,
+    CONF_TOKEN_CREATE_TIME,
+    CONF_TOKEN_EXPIRES,
+    CONF_TOKEN_REFRESH_TIME,
+    DEFAULT_SCAN_INTERVAL_SECONDS,
+)
 
 
 async def async_get_config_entry_diagnostics(
@@ -41,6 +50,24 @@ async def async_get_config_entry_diagnostics(
         },
         "api": {
             "discovery_cached": client.discovery_cached,
+            "auth": {
+                **client.auth_diagnostics,
+                "entry_auth_mode": entry.data.get(CONF_AUTH_MODE),
+                "entry_token_present": bool(entry.data.get(CONF_ACCESS_TOKEN)),
+                "entry_password_configured": bool(entry.data.get(CONF_PASSWORD)),
+                "expiry_metadata": {
+                    "expires_present": CONF_TOKEN_EXPIRES in entry.data,
+                    "expires_type": type(entry.data.get(CONF_TOKEN_EXPIRES)).__name__,
+                    "create_time_present": CONF_TOKEN_CREATE_TIME in entry.data,
+                    "create_time_type": type(
+                        entry.data.get(CONF_TOKEN_CREATE_TIME)
+                    ).__name__,
+                    "refresh_time_present": CONF_TOKEN_REFRESH_TIME in entry.data,
+                    "refresh_time_type": type(
+                        entry.data.get(CONF_TOKEN_REFRESH_TIME)
+                    ).__name__,
+                },
+            },
         },
         "telemetry": {
             "has_data": telemetry is not None,

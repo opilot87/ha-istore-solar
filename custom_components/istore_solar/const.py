@@ -12,8 +12,20 @@ MIN_SCAN_INTERVAL_SECONDS = 15
 MAX_SCAN_INTERVAL_SECONDS = 300
 
 CONF_EMAIL = "email"
+CONF_ACCOUNT = "account"
+CONF_PASSWORD = "password"
 CONF_ACCESS_TOKEN = "access_token"
 CONF_SCAN_INTERVAL = "scan_interval"
+CONF_AUTH_MODE = "auth_mode"
+CONF_TOKEN_EXPIRES = "token_expires"
+CONF_TOKEN_CREATE_TIME = "token_create_time"
+CONF_TOKEN_REFRESH_TIME = "token_refresh_time"
+CONF_LATEST_LOGIN_SUCCESS = "latest_login_success"
+CONF_AUTOMATIC_RELOGIN_COUNT = "automatic_relogin_count"
+CONF_LAST_AUTH_ERROR_CLASS = "last_auth_error_class"
+
+AUTH_MODE_AUTOMATIC = "automatic"
+AUTH_MODE_MANUAL_TOKEN = "manual_token"
 
 ATTRIBUTION = "Data provided by the iStore Solar cloud portal"
 MANUFACTURER = "iStore"
