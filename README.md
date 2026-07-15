@@ -1,7 +1,11 @@
 # iStore Solar for Home Assistant
 
 <p align="center">
-  <img src="custom_components/istore_solar/brand/icon.png" alt="iStore logo" width="96">
+  <img
+    src="https://raw.githubusercontent.com/opilot87/ha-istore-solar/main/custom_components/istore_solar/brand/logo.png"
+    alt="iStore logo"
+    width="400"
+  >
 </p>
 
 ## Overview
