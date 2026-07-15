@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.1
+
+- Fixed automatic-login setup when the successful login response contains
+  `data.accessToken` and an `organizations` list rather than a final
+  `session/get` token or scalar `orgId`.
+- Accepted successful empty or minimal login bodies while still requiring
+  `session/get.data.id` and `user-info` token validation before setup succeeds.
+- Added sanitized debug logging for each automatic-authentication stage.
+
 ## 0.5.0
 
 - Added automatic account/password login using the confirmed RSA-OAEP

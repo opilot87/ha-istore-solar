@@ -106,6 +106,19 @@ class TestAuthenticationStaticConfig(unittest.TestCase):
         self.assertIn('session_data.get("id")', text)
         self.assertIn('user_info.get("token")', text)
         self.assertIn("IStoreSolarTokenMismatchError", text)
+        self.assertIn('data.get("organizations")', text)
+        self.assertIn('"accessToken"', text)
+
+    def test_login_response_is_not_treated_as_final_proof(self) -> None:
+        text = API_PY.read_text()
+        self.assertIn('if not response_text.strip():', text)
+        self.assertIn('payload = {}', text)
+        self.assertIn('body_type = "empty"', text)
+        self.assertIn("INVALID_CREDENTIALS_CODE", text)
+        self.assertIn('"Login accepted, but no access token was returned"', text)
+        self.assertIn('"Access token returned, but validation failed"', text)
+        self.assertIn("await self.async_set_session(login_token, org_id)", text)
+        self.assertIn("session_token = session_data.get(\"id\")", text)
 
     def test_automatic_relogin_is_one_shot_and_locked(self) -> None:
         text = API_PY.read_text()
@@ -131,7 +144,7 @@ class TestAuthenticationStaticConfig(unittest.TestCase):
 
     def test_manifest_declares_crypto_dependency_and_version(self) -> None:
         manifest = json.loads(MANIFEST_JSON.read_text())
-        self.assertEqual("0.5.0", manifest["version"])
+        self.assertEqual("0.5.1", manifest["version"])
         self.assertIn("cryptography>=41.0.0", manifest["requirements"])
 
     def test_diagnostics_and_redaction_cover_auth_secrets(self) -> None:

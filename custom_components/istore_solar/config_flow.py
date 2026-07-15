@@ -196,10 +196,7 @@ def _error_from_exception(err: Exception) -> tuple[str, str]:
     if isinstance(err, IStoreSolarTokenMismatchError):
         return "token_mismatch", ""
     if isinstance(err, IStoreSolarUnexpectedLoginResponseError):
-        return "unexpected_login_response", _development_error_detail(
-            "Unexpected login response",
-            err,
-        )
+        return "unexpected_login_response", _safe_login_error_detail(err)
     if isinstance(err, IStoreSolarMalformedResponseError):
         return "unsupported_response", _development_error_detail(
             "Unexpected response",
@@ -223,6 +220,18 @@ def _development_error_detail(prefix: str, err: Exception) -> str:
     if isinstance(status, int):
         return f"{prefix} during {operation} (HTTP {status})."
     return f"{prefix} during {operation}."
+
+
+def _safe_login_error_detail(err: Exception) -> str:
+    """Return a safe login-stage diagnostic without echoing credentials."""
+    message = str(err)
+    if message in {
+        "Login accepted, but session setup failed",
+        "Login accepted, but no access token was returned",
+        "Access token returned, but validation failed",
+    }:
+        return message
+    return _development_error_detail("Unexpected login response", err)
 
 
 class IStoreSolarConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):

@@ -5,7 +5,7 @@ cloud portal at `home.istore.net.au`.
 
 ## Status
 
-Version 0.5.0 is a private experimental read-only build. It supports automatic
+Version 0.5.1 is a private experimental read-only build. It supports automatic
 account/password sign-in plus an advanced manual bearer-token fallback, and
 exposes validated lifetime solar, grid, and battery energy sensors for Home
 Assistant Energy Dashboard testing.
