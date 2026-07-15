@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 
 from . import IStoreSolarConfigEntry
 from .api import redact_sensitive_data
@@ -17,6 +18,7 @@ from .const import (
     CONF_TOKEN_EXPIRES,
     CONF_TOKEN_REFRESH_TIME,
     DEFAULT_SCAN_INTERVAL_SECONDS,
+    INTEGRATION_VERSION,
 )
 
 
@@ -29,18 +31,32 @@ async def async_get_config_entry_diagnostics(
     telemetry = coordinator.data
     client = coordinator.client
     last_success_time = getattr(coordinator, "last_update_success_time", None)
+    entity_registry = er.async_get(hass)
+    registry_entries = er.async_entries_for_config_entry(
+        entity_registry,
+        entry.entry_id,
+    )
+    entity_count_by_platform: dict[str, int] = {}
+    for registry_entry in registry_entries:
+        entity_count_by_platform[registry_entry.domain] = (
+            entity_count_by_platform.get(registry_entry.domain, 0) + 1
+        )
 
     data: dict[str, Any] = {
         "entry": {
             "domain": entry.domain,
+            "integration_version": INTEGRATION_VERSION,
+            "config_entry_version": entry.version,
             "options": dict(entry.options),
             "polling_interval_seconds": entry.options.get(
                 CONF_SCAN_INTERVAL,
                 DEFAULT_SCAN_INTERVAL_SECONDS,
             ),
+            "entity_count_by_platform": entity_count_by_platform,
         },
         "coordinator": {
             "last_update_success": coordinator.last_update_success,
+            "last_update_duration_seconds": coordinator.last_update_duration_seconds,
             "last_update_success_time": str(last_success_time)
             if last_success_time
             else None,

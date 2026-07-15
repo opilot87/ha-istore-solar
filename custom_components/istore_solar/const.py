@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import timedelta
 
 DOMAIN = "istore_solar"
+INTEGRATION_VERSION = "0.6.0"
 DEFAULT_NAME = "iStore Solar"
 DEFAULT_SCAN_INTERVAL = timedelta(seconds=30)
 DEFAULT_SCAN_INTERVAL_SECONDS = 30

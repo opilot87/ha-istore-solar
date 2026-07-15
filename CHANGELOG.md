@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.6.0
+
+- Prepared the integration for public beta with README restructuring, HACS
+  readiness notes, security policy, contribution guide, and feature-request
+  template.
+- Normalized Home Assistant display names for site, inverter, battery, and
+  meter devices without changing stable unique IDs.
+- Renamed daily entity display labels for clearer Home Assistant naming while
+  preserving unique IDs.
+- Disabled raw status-code diagnostics by default.
+- Added coordinator update duration tracking and richer sanitized diagnostics.
+- Retained the last valid optional cumulative telemetry when optional cumulative
+  requests fail, while still allowing live telemetry to update.
+- Added local iStore brand assets for Home Assistant/HACS presentation, plus
+  optional Buy Me a Coffee funding metadata.
+- Kept automatic sign-in, manual access-token fallback, and one-shot relogin
+  behavior from v0.5.x.
+
 ## 0.5.1
 
 - Fixed automatic-login setup when the successful login response contains

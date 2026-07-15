@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Report a problem with the experimental iStore Solar integration
+about: Report a problem with the iStore Solar public beta
 title: ""
 labels: bug
 assignees: ""

@@ -205,18 +205,21 @@ SENSOR_DESCRIPTIONS: tuple[IStoreSolarSensorEntityDescription, ...] = (
         key=SENSOR_SITE_STATUS,
         translation_key=SENSOR_SITE_STATUS,
         entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
     ),
     IStoreSolarSensorEntityDescription(
         key=SENSOR_INVERTER_STATUS,
         translation_key=SENSOR_INVERTER_STATUS,
         device_key="inverter",
         entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
     ),
     IStoreSolarSensorEntityDescription(
         key=SENSOR_BATTERY_STATUS,
         translation_key=SENSOR_BATTERY_STATUS,
         device_key="battery",
         entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
     ),
 )
 
@@ -304,7 +307,7 @@ class IStoreSolarSensor(
         """Return the normalized device for this sensor."""
         default_site = IStoreSolarDevice(
             identifiers=(DOMAIN, "site"),
-            name="iStore Solar",
+            name="iStore Solar Site",
             manufacturer=MANUFACTURER,
         )
 
@@ -315,7 +318,7 @@ class IStoreSolarSensor(
                 return default_site
             return IStoreSolarDevice(
                 identifiers=(DOMAIN, self.entity_description.device_key),
-                name=f"iStore Solar {self.entity_description.device_key.title()}",
+                name=_fallback_device_name(self.entity_description.device_key),
                 manufacturer=MANUFACTURER,
                 via_device=(DOMAIN, "site"),
             )
@@ -330,8 +333,19 @@ class IStoreSolarSensor(
             self.entity_description.device_key,
             IStoreSolarDevice(
                 identifiers=(DOMAIN, self.entity_description.device_key),
-                name=f"iStore Solar {self.entity_description.device_key.title()}",
+                name=_fallback_device_name(self.entity_description.device_key),
                 manufacturer=MANUFACTURER,
                 via_device=self.coordinator.data.site.identifiers,
             ),
         )
+
+
+def _fallback_device_name(device_key: str) -> str:
+    """Return a stable generic device display name."""
+    return {
+        "site": "iStore Solar Site",
+        "inverter": "Inverter 1",
+        "battery": "Battery 1",
+        "meter": "Meter 1",
+        "dongle": "Dongle 1",
+    }.get(device_key, f"iStore Solar {device_key.title()}")

@@ -144,7 +144,7 @@ class TestAuthenticationStaticConfig(unittest.TestCase):
 
     def test_manifest_declares_crypto_dependency_and_version(self) -> None:
         manifest = json.loads(MANIFEST_JSON.read_text())
-        self.assertEqual("0.5.1", manifest["version"])
+        self.assertEqual("0.6.0", manifest["version"])
         self.assertIn("cryptography>=41.0.0", manifest["requirements"])
 
     def test_diagnostics_and_redaction_cover_auth_secrets(self) -> None:

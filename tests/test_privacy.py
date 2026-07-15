@@ -73,6 +73,21 @@ class TestPrivacyHelpers(unittest.TestCase):
 
         self.assertEqual(data, redacted)
 
+    def test_auth_crypto_and_request_keys_are_redacted(self) -> None:
+        data = {
+            "public_key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AFAKE",
+            "ciphertext": "a" * 344,
+            "requestId": "abcdef0123456789abcdef0123456789",
+            "raw_payload": {"token": "APP_PORTAL_S_abcdefghijklmnopqrstuvwxyz123456"},
+        }
+
+        redacted = privacy.redact_sensitive_data(data)
+
+        self.assertEqual(redacted["public_key"], privacy.REDACTED)
+        self.assertEqual(redacted["ciphertext"], privacy.REDACTED)
+        self.assertEqual(redacted["requestId"], privacy.REDACTED)
+        self.assertEqual(redacted["raw_payload"]["token"], privacy.REDACTED)
+
 
 if __name__ == "__main__":
     unittest.main()

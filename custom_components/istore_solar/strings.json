@@ -139,19 +139,19 @@
         "name": "Battery state of charge"
       },
       "battery_energy_charged_today": {
-        "name": "Energy charged today"
+        "name": "Battery charged today"
       },
       "battery_energy_discharged_today": {
-        "name": "Energy discharged today"
+        "name": "Battery discharged today"
       },
       "total_solar_production": {
         "name": "Total solar production"
       },
       "grid_energy_imported_today": {
-        "name": "Grid energy imported today"
+        "name": "Grid imported today"
       },
       "grid_energy_exported_today": {
-        "name": "Grid energy exported today"
+        "name": "Grid exported today"
       },
       "total_grid_imported_energy": {
         "name": "Total grid imported energy"

@@ -298,6 +298,8 @@ class IStoreSolarApiClient:
         self._discovered_site: _DiscoveredSite | None = None
         self._previous_cumulative_values: dict[str, float | int] = {}
         self._cumulative_decreases: set[str] = set()
+        self._last_battery_total_energy: dict[str, Any] = {}
+        self._last_meter_total_energy: dict[str, dict[str, Any]] = {}
         self._login_lock = asyncio.Lock()
         self._automatic_relogin_count = 0
         self._latest_login_success: float | None = None
@@ -783,6 +785,8 @@ class IStoreSolarApiClient:
                 battery_total_energy = await self.async_get_battery_total_energy(
                     battery_id
                 )
+                if battery_total_energy:
+                    self._last_battery_total_energy = battery_total_energy
             except IStoreSolarError as err:
                 LOGGER.warning(
                     (
@@ -793,10 +797,13 @@ class IStoreSolarApiClient:
                     err.status if err.status is not None else "unknown",
                     type(err).__name__,
                 )
+                battery_total_energy = self._last_battery_total_energy
         meter_asset = _first_asset_by_type(discovered_site.assets, "Res_Meter")
         if _asset_identifier(meter_asset) is not None:
             try:
                 meter_total_energy = await self.async_get_meter_total_energy(site_id)
+                if meter_total_energy:
+                    self._last_meter_total_energy = meter_total_energy
             except IStoreSolarError as err:
                 LOGGER.warning(
                     (
@@ -807,6 +814,7 @@ class IStoreSolarApiClient:
                     err.status if err.status is not None else "unknown",
                     type(err).__name__,
                 )
+                meter_total_energy = self._last_meter_total_energy
 
         return self._normalize_telemetry(
             site_id,
@@ -928,6 +936,7 @@ class IStoreSolarApiClient:
             headers.update(extra_headers)
 
         LOGGER.debug("Starting iStore Solar setup-stage request: %s", operation)
+        request_started = time.perf_counter()
         last_connection_error: IStoreSolarConnectionError | None = None
         for attempt in range(1, MAX_TEMPORARY_REQUEST_ATTEMPTS + 1):
             try:
@@ -1025,6 +1034,16 @@ class IStoreSolarApiClient:
                 _log_api_exception(last_connection_error, err)
                 raise last_connection_error from err
             except IStoreSolarError as err:
+                LOGGER.debug(
+                    (
+                        "iStore Solar API request failed: stage=%s status=%s "
+                        "application_code=unknown duration=%.3f exception_class=%s"
+                    ),
+                    operation,
+                    err.status if err.status is not None else "unknown",
+                    time.perf_counter() - request_started,
+                    type(err).__name__,
+                )
                 _log_api_exception(err, err)
                 if (
                     allow_relogin
@@ -1155,6 +1174,16 @@ class IStoreSolarApiClient:
                 _log_api_exception(raised, raised)
                 raise
 
+        LOGGER.debug(
+            (
+                "iStore Solar API request succeeded: stage=%s status=%s "
+                "application_code=%s duration=%.3f"
+            ),
+            operation,
+            response.status,
+            code if code is not None else "none",
+            time.perf_counter() - request_started,
+        )
         return _ResponseContext(
             payload=payload,
             path=path,
@@ -1182,10 +1211,9 @@ class IStoreSolarApiClient:
         site_live_item = _detail_item(site_live_detail, site_id)
 
         site_attrs = _dict_value(overview_item, "attributes")
-        site_name = _string_value(site_attrs.get("name")) or "iStore Solar Site"
         site_device = IStoreSolarDevice(
             identifiers=(DOMAIN, site_id),
-            name=site_name,
+            name="iStore Solar Site",
             model=_string_value(site_attrs.get("modelName")),
             manufacturer=MANUFACTURER,
         )
@@ -1650,6 +1678,7 @@ def _devices_from_assets(
 ) -> dict[str, IStoreSolarDevice]:
     """Build normalized device information from asset-list rows."""
     devices: dict[str, IStoreSolarDevice] = {}
+    type_counts: dict[str, int] = {}
     for asset in assets:
         attrs = _dict_value(asset, "attributes")
         mdm_type = _string_value(asset.get("mdmType")) or _string_value(
@@ -1663,7 +1692,8 @@ def _devices_from_assets(
         if key is None or key in devices:
             continue
 
-        name = _string_value(attrs.get("name")) or f"iStore Solar {key.title()}"
+        type_counts[key] = type_counts.get(key, 0) + 1
+        name = _generic_device_name(key, type_counts[key])
         model = _string_value(attrs.get("modelName"))
         devices[key] = IStoreSolarDevice(
             identifiers=(DOMAIN, mdm_id),
@@ -1701,6 +1731,17 @@ def _device_key_for_type(mdm_type: str) -> str | None:
         "Res_Meter": "meter",
         "Dongle": "dongle",
     }.get(mdm_type)
+
+
+def _generic_device_name(device_key: str, index: int) -> str:
+    """Return a stable generic device name for Home Assistant display."""
+    base_name = {
+        "inverter": "Inverter",
+        "battery": "Battery",
+        "meter": "Meter",
+        "dongle": "Dongle",
+    }.get(device_key, "Device")
+    return f"{base_name} {index}"
 
 
 def _first_asset_by_type(assets: list[dict[str, Any]], mdm_type: str) -> dict[str, Any]:

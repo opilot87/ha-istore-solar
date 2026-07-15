@@ -13,6 +13,7 @@ INIT_PY = ROOT / "custom_components" / "istore_solar" / "__init__.py"
 CONFIG_FLOW_PY = ROOT / "custom_components" / "istore_solar" / "config_flow.py"
 STRINGS_JSON = ROOT / "custom_components" / "istore_solar" / "strings.json"
 README_MD = ROOT / "README.md"
+FUNDING_YML = ROOT / ".github" / "FUNDING.yml"
 
 
 class TestStaticConfig(unittest.TestCase):
@@ -93,12 +94,14 @@ class TestStaticConfig(unittest.TestCase):
         text = STRINGS_JSON.read_text()
         for name in (
             "Total solar production",
-            "Grid energy imported today",
-            "Grid energy exported today",
+            "Grid imported today",
+            "Grid exported today",
             "Total grid imported energy",
             "Total grid exported energy",
             "Total battery charged energy",
             "Total battery discharged energy",
+            "Battery charged today",
+            "Battery discharged today",
         ):
             self.assertIn(name, text)
 
@@ -107,8 +110,8 @@ class TestStaticConfig(unittest.TestCase):
         self.assertIn("| Grid consumption | Total grid imported energy |", readme)
         self.assertIn("| Return to grid | Total grid exported energy |", readme)
         self.assertIn("Do not use daily-resetting entities", readme)
-        self.assertIn("- Grid energy imported today", readme)
-        self.assertIn("- Grid energy exported today", readme)
+        self.assertIn("- Grid imported today", readme)
+        self.assertIn("- Grid exported today", readme)
 
     def test_experimental_lifetime_grid_names_are_not_created(self) -> None:
         combined = (
@@ -172,6 +175,79 @@ class TestStaticConfig(unittest.TestCase):
             text.count("entity_category=EntityCategory.DIAGNOSTIC"),
             3,
         )
+        self.assertEqual(text.count("entity_registry_enabled_default=False"), 3)
+
+    def test_public_beta_device_names_are_generic(self) -> None:
+        api_text = API_PY.read_text()
+        sensor_text = SENSOR_PY.read_text()
+        self.assertIn('name="iStore Solar Site"', api_text)
+        self.assertIn('"inverter": "Inverter"', api_text)
+        self.assertIn('"battery": "Battery"', api_text)
+        self.assertIn('"meter": "Meter"', api_text)
+        self.assertIn('"inverter": "Inverter 1"', sensor_text)
+        self.assertNotIn('name = _string_value(attrs.get("name"))', api_text)
+
+    def test_readme_has_public_beta_sections(self) -> None:
+        text = README_MD.read_text()
+        for heading in (
+            "## Overview",
+            "## Supported Devices",
+            "## Entities",
+            "## Installation",
+            "## Setup Using Account/Password",
+            "## Manual Access-Token Fallback",
+            "## Energy Dashboard Setup",
+            "## Power Flow Card Plus Example",
+            "## Sign Conventions",
+            "## Options",
+            "## Authentication Behaviour",
+            "## Diagnostics",
+            "## Troubleshooting",
+            "## Security And Privacy",
+            "## Known Limitations",
+            "## Updating",
+            "## Removing",
+            "## Contributing",
+            "## Support development",
+        ):
+            self.assertIn(heading, text)
+
+    def test_branding_and_funding_are_declared(self) -> None:
+        readme = README_MD.read_text()
+        funding = FUNDING_YML.read_text()
+        normalized_readme = " ".join(readme.split())
+        for asset in ("icon.png", "icon@2x.png", "logo.png", "logo@2x.png"):
+            self.assertTrue(
+                (ROOT / "custom_components" / "istore_solar" / "brand" / asset).exists()
+            )
+        self.assertIn("buy_me_a_coffee: opilot87", funding)
+        self.assertIn("independent community integration", normalized_readme)
+        self.assertIn(
+            "not affiliated with, endorsed by, or supported by iStore",
+            normalized_readme,
+        )
+        self.assertIn("https://buymeacoffee.com/opilot87", readme)
+        self.assertNotIn("buymeacoffee", (ROOT / "custom_components" / "istore_solar" / "strings.json").read_text().lower())
+
+    def test_diagnostics_include_public_beta_fields(self) -> None:
+        text = (ROOT / "custom_components" / "istore_solar" / "diagnostics.py").read_text()
+        self.assertIn("integration_version", text)
+        self.assertIn("config_entry_version", text)
+        self.assertIn("last_update_duration_seconds", text)
+        self.assertIn("entity_count_by_platform", text)
+
+    def test_optional_cumulative_failures_retain_last_values(self) -> None:
+        text = API_PY.read_text()
+        self.assertIn("self._last_battery_total_energy", text)
+        self.assertIn("self._last_meter_total_energy", text)
+        self.assertIn("battery_total_energy = self._last_battery_total_energy", text)
+        self.assertIn("meter_total_energy = self._last_meter_total_energy", text)
+
+    def test_coordinator_records_update_duration(self) -> None:
+        text = (ROOT / "custom_components" / "istore_solar" / "coordinator.py").read_text()
+        self.assertIn("last_update_duration_seconds", text)
+        self.assertIn("perf_counter", text)
+        self.assertIn("coordinator update succeeded", text)
 
 
 if __name__ == "__main__":

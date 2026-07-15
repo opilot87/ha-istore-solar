@@ -1,14 +1,24 @@
-# Branding Preparation
+# Branding
 
-The integration currently works without a bundled icon or logo.
+The integration includes local brand assets under
+`custom_components/istore_solar/brand/`:
 
-Future public branding should follow Home Assistant Brands requirements:
+- `icon.png`
+- `icon@2x.png`
+- `logo.png`
+- `logo@2x.png`
 
-- Use original artwork or an asset with explicit permission.
-- Do not copy iStore, vendor, portal, or product artwork without permission.
-- Provide the required icon and logo formats through the Home Assistant Brands
-  repository if the integration is prepared for public release.
-- Keep any temporary private artwork out of the integration package unless its
-  license and source are documented.
+Home Assistant 2026.3 and newer can use the local brand directory for custom
+integrations. HACS custom repositories require at least `brand/icon.png` for
+local presentation. No `manifest.json` key is required for these local brand
+images.
 
-For HACS custom repository testing, no bundled icon is required.
+Older Home Assistant versions continue to load the integration, but may show a
+generic icon or use remotely sourced branding instead of the local assets.
+
+iStore Solar is an independent community integration and is not affiliated with,
+endorsed by, or supported by iStore.
+
+iStore and its associated logos are trademarks of their respective owners.
+
+Do not commit original unprocessed source artwork from `private/branding/`.
